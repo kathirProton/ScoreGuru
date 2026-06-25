@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #fffdf1;
+  color: #16231a;
+  font-feature-settings: "ss01", "cv01";
+  overscroll-behavior-y: none;
+}
+
+/* Hide scrollbars on horizontal chip rows but keep scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@layer components {
+  .sg-card {
+    @apply rounded-2xl bg-white/80 border border-line shadow-card backdrop-blur-sm;
+  }
+  .sg-chip {
+    @apply inline-flex items-center justify-center rounded-full text-xs font-semibold tabular-nums;
+  }
+  .sg-btn {
+    @apply inline-flex items-center justify-center rounded-xl font-semibold transition
+      active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none select-none;
+  }
+  .sg-btn-primary {
+    @apply sg-btn bg-brand text-brand-900 shadow-glow hover:brightness-105;
+  }
+  .sg-btn-ghost {
+    @apply sg-btn bg-white text-ink border border-line hover:bg-cream-200;
+  }
+  .sg-btn-danger {
+    @apply sg-btn bg-wicket text-white hover:brightness-105;
+  }
+  .sg-input {
+    @apply w-full rounded-xl border border-line bg-white px-4 py-3 text-ink
+      placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200;
+  }
+  .sg-label {
+    @apply block text-sm font-medium text-ink-soft mb-1.5;
+  }
+}
+
+/* Skeleton shimmer */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #ece8d4;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.6),
+    transparent
+  );
+  animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Safe-area padding for installed PWA */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+.safe-top {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
