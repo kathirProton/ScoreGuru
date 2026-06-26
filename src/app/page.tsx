@@ -3,7 +3,9 @@ import { PublicShell } from "@/components/public/PublicShell";
 import { MatchCard } from "@/components/public/MatchCard";
 import { BrandMark } from "@/components/ui/Brand";
 import { SectionTitle, EmptyState, LiveDot } from "@/components/ui/primitives";
-import { getLiveMatches, getCompletedMatches, getMatchView } from "@/lib/data";
+import { Leaderboard } from "@/components/public/Leaderboard";
+import { getLiveMatches, getCompletedMatches, getMatchView, getStatsBundle } from "@/lib/data";
+import { aggregatePlayers, matchesPlayed, bestFigures } from "@/lib/cricket/stats";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +17,23 @@ export default async function HomePage() {
   const recentViews = (
     await Promise.all(completed.slice(0, 3).map((m) => getMatchView(m.id)))
   ).filter(Boolean);
+
+  // stat leaders for the home page
+  const statsBundle = await getStatsBundle();
+  const players = new Map(statsBundle.players.map((p) => [p.id, p]));
+  const aggs = aggregatePlayers(statsBundle);
+  const all = [...aggs.values()];
+  const topRuns = all
+    .filter((a) => a.runs > 0)
+    .sort((x, y) => y.runs - x.runs)
+    .slice(0, 5)
+    .map((a) => ({ playerId: a.playerId, value: `${a.runs}`, sub: `${matchesPlayed(a)} M · HS ${a.highScore}` }));
+  const topWkts = all
+    .filter((a) => a.wickets > 0)
+    .sort((x, y) => y.wickets - x.wickets)
+    .slice(0, 5)
+    .map((a) => ({ playerId: a.playerId, value: `${a.wickets}`, sub: `Best ${bestFigures(a)}` }));
+  const hasStats = topRuns.length > 0 || topWkts.length > 0;
 
   return (
     <PublicShell>
@@ -98,6 +117,19 @@ export default async function HomePage() {
           />
         )}
       </section>
+
+      {/* Stat leaders */}
+      {hasStats && (
+        <section className="mt-8">
+          <SectionTitle action={<Link href="/stats" className="text-sm font-medium text-brand-600">All leaderboards</Link>}>
+            Stat leaders
+          </SectionTitle>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Leaderboard title="Orange Cap — Most Runs" emoji="🧡" players={players} accent="text-[#E07A1F]" rows={topRuns} />
+            <Leaderboard title="Purple Cap — Most Wickets" emoji="💜" players={players} accent="text-[#7C3AED]" rows={topWkts} />
+          </div>
+        </section>
+      )}
     </PublicShell>
   );
 }

@@ -3,6 +3,7 @@ import { ensureAdmin } from "@/lib/auth";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { createReadClient } from "@/lib/supabase/server";
 import { Pill, LiveDot, EmptyState, Avatar } from "@/components/ui/primitives";
+import { MatchDeleteButton } from "@/components/admin/MatchDeleteButton";
 import { formatDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -105,6 +106,7 @@ export default async function AdminDashboard() {
                   <Link href={`/admin/matches/${m.id}/edit`} className="sg-btn-ghost px-3 py-2 text-sm">
                     Edit
                   </Link>
+                  <MatchDeleteButton matchId={m.id} label={`${nameOf(m.team_a_id)} vs ${nameOf(m.team_b_id)}`} />
                 </div>
               </div>
             ))}
