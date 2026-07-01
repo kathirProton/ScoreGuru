@@ -135,6 +135,76 @@ export async function retireBatsman(
   return { ok: true };
 }
 
+/** Manually flip the two batsmen at the crease (admin override of strike). */
+export async function swapStrike(inningsId: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  const ctx = await loadInningsCtx(supabase, inningsId);
+  const state = stateOf(ctx.match, ctx.innings, ctx.deliveries, ctx.events, ctx.battingTeamSize);
+  if (state.strikerId === null || state.nonStrikerId === null)
+    return { error: "Need two batsmen at the crease to swap strike." };
+  // swap_strike carries no batsman of its own; player_id just satisfies the FK.
+  await supabase.from("batting_events").insert({
+    innings_id: inningsId,
+    player_id: state.strikerId,
+    event_type: "swap_strike",
+  });
+  revalidateScoring(ctx.match.id);
+  return { ok: true };
+}
+
+/**
+ * Replace a batsman currently at the crease with one from the bench (or a
+ * previously retired-not-out batsman returning). The outgoing batsman is
+ * marked retired-not-out — their runs/balls are kept and they can come back.
+ * `incomingOnStrike` lets the admin decide who takes strike.
+ */
+export async function replaceBatsman(
+  inningsId: string,
+  outgoingId: string,
+  incomingId: string,
+  incomingOnStrike: boolean
+) {
+  await requireAdmin();
+  if (outgoingId === incomingId)
+    return { error: "Outgoing and incoming batsman must differ." };
+  const supabase = createServiceClient();
+  const ctx = await loadInningsCtx(supabase, inningsId);
+  const state = stateOf(ctx.match, ctx.innings, ctx.deliveries, ctx.events, ctx.battingTeamSize);
+
+  const outgoingWasStriker = state.strikerId === outgoingId;
+  const outgoingWasNonStriker = state.nonStrikerId === outgoingId;
+  if (!outgoingWasStriker && !outgoingWasNonStriker)
+    return { error: "That batsman is not at the crease." };
+  if (incomingId === state.strikerId || incomingId === state.nonStrikerId)
+    return { error: "Incoming batsman is already at the crease." };
+
+  // 1) Outgoing leaves not-out (keeps their score, can return later).
+  await supabase.from("batting_events").insert({
+    innings_id: inningsId,
+    player_id: outgoingId,
+    event_type: "retired_not_out",
+  });
+  // 2) Incoming comes in at the vacated end.
+  await supabase.from("batting_events").insert({
+    innings_id: inningsId,
+    player_id: incomingId,
+    event_type: "in",
+    at_end: outgoingWasStriker ? "striker" : "non_striker",
+  });
+  // 3) Incoming lands on the vacated end; flip if the admin wants otherwise.
+  const incomingLandsOnStrike = outgoingWasStriker;
+  if (incomingOnStrike !== incomingLandsOnStrike) {
+    await supabase.from("batting_events").insert({
+      innings_id: inningsId,
+      player_id: incomingId,
+      event_type: "swap_strike",
+    });
+  }
+  revalidateScoring(ctx.match.id);
+  return { ok: true };
+}
+
 // ── delivery ─────────────────────────────────────────────────────
 export interface DeliveryInput {
   runs_off_bat: number;
@@ -152,6 +222,15 @@ export async function recordDelivery(
   input: DeliveryInput
 ) {
   await requireAdmin();
+  // Defensive input validation (the UI only offers valid values, but a direct
+  // request must not be able to inject negative / fractional runs).
+  if (
+    !Number.isInteger(input.runs_off_bat) ||
+    !Number.isInteger(input.extra_runs) ||
+    input.runs_off_bat < 0 ||
+    input.extra_runs < 0
+  )
+    return { error: "Runs must be non-negative whole numbers." };
   const supabase = createServiceClient();
   const ctx = await loadInningsCtx(supabase, inningsId);
   const state = stateOf(ctx.match, ctx.innings, ctx.deliveries, ctx.events, ctx.battingTeamSize);

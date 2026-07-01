@@ -2,7 +2,7 @@ import "server-only";
 import { createReadClient } from "./supabase/server";
 import { fetchMatchBundle } from "./cricket/load";
 import { buildMatchView, MatchView } from "./cricket/matchview";
-import type { Match, Player, MatchStatus, PlayerStatus } from "./types";
+import type { Match, Player, MatchStatus, PlayerStatus, Team, TeamPlayer } from "./types";
 
 const LIVE_STATUSES: MatchStatus[] = ["live", "innings_break", "super_over"];
 
@@ -42,6 +42,26 @@ export async function getTeamsMap() {
   const supabase = createReadClient();
   const { data } = await supabase.from("teams").select("*");
   return new Map((data ?? []).map((t) => [t.id, t]));
+}
+
+export async function getTeams(): Promise<Team[]> {
+  const supabase = createReadClient();
+  const { data } = await supabase.from("teams").select("*").order("name");
+  return data ?? [];
+}
+
+export async function getTeamPlayers(): Promise<TeamPlayer[]> {
+  const supabase = createReadClient();
+  const { data } = await supabase.from("team_players").select("*");
+  return data ?? [];
+}
+
+/** Map of teamId → ordered player ids on that team's roster. */
+export async function getRosterMap(): Promise<Record<string, string[]>> {
+  const rows = await getTeamPlayers();
+  const map: Record<string, string[]> = {};
+  for (const r of rows) (map[r.team_id] ??= []).push(r.player_id);
+  return map;
 }
 
 export async function getPlayers(statuses: PlayerStatus[] = ["approved"]): Promise<Player[]> {

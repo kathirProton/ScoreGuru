@@ -30,7 +30,6 @@ export function PlayerForm({
 }) {
   const router = useRouter();
   const [name, setName] = useState(player?.name ?? "");
-  const [nickname, setNickname] = useState(player?.nickname ?? "");
   const [jersey, setJersey] = useState(player?.jersey_number?.toString() ?? "");
   const [batting, setBatting] = useState(player?.batting_style ?? "");
   const [bowling, setBowling] = useState(player?.bowling_style ?? "");
@@ -65,7 +64,6 @@ export function PlayerForm({
     setError(null);
     const payload = {
       name,
-      nickname,
       jersey_number: jersey ? parseInt(jersey, 10) : null,
       batting_style: (batting || null) as Player["batting_style"],
       bowling_style: bowling || null,
@@ -85,7 +83,6 @@ export function PlayerForm({
     setDone(true);
     if (mode === "public") {
       setName("");
-      setNickname("");
       setJersey("");
       setBatting("");
       setBowling("");
@@ -123,21 +120,14 @@ export function PlayerForm({
 
       <div>
         <label className="sg-label">Name *</label>
-        <input className="sg-input" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Full name (unique)" />
+        <input className="sg-input" value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} placeholder="Full name (unique)" />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="sg-label">Nickname</label>
-          <input className="sg-input" value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Optional" />
-        </div>
         <div>
           <label className="sg-label">Jersey #</label>
           <input className="sg-input" type="number" inputMode="numeric" value={jersey} onChange={(e) => setJersey(e.target.value)} placeholder="—" />
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="sg-label">Batting</label>
           <select className="sg-input" value={batting} onChange={(e) => setBatting(e.target.value)}>
@@ -146,17 +136,18 @@ export function PlayerForm({
             <option value="left">Left-hand</option>
           </select>
         </div>
-        <div>
-          <label className="sg-label">Bowling</label>
-          <select className="sg-input" value={bowling} onChange={(e) => setBowling(e.target.value)}>
-            <option value="">—</option>
-            {BOWLING_STYLES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </div>
+      </div>
+
+      <div>
+        <label className="sg-label">Bowling</label>
+        <select className="sg-input" value={bowling} onChange={(e) => setBowling(e.target.value)}>
+          <option value="">—</option>
+          {BOWLING_STYLES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
       </div>
 
       {error && <p className="text-sm font-medium text-wicket">{error}</p>}

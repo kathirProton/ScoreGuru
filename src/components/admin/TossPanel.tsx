@@ -46,7 +46,7 @@ export function TossPanel({
               key={t.id}
               onClick={() => setWinner(t.id)}
               className={`flex flex-col items-center gap-2 rounded-xl border p-3 transition ${
-                winner === t.id ? "border-brand bg-brand-50" : "border-line bg-white"
+                winner === t.id ? "border-brand bg-brand-50" : "border-line bg-cream-200"
               }`}
             >
               <Avatar name={t.name} photo={t.logo_url} size={44} />
@@ -64,7 +64,7 @@ export function TossPanel({
               key={d}
               onClick={() => setDecision(d)}
               className={`rounded-xl border p-3 font-semibold capitalize transition ${
-                decision === d ? "border-brand bg-brand-50 text-brand-700" : "border-line bg-white text-ink"
+                decision === d ? "border-brand bg-brand-50 text-brand-700" : "border-line bg-cream-200 text-ink"
               }`}
             >
               {d === "bat" ? "🏏 Bat first" : "⚾ Bowl first"}

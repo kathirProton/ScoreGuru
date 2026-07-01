@@ -34,8 +34,11 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type batting_event_type as enum ('in','retired_not_out','retired_out');
+  create type batting_event_type as enum ('in','retired_not_out','retired_out','swap_strike');
 exception when duplicate_object then null; end $$;
+-- If the type already existed without 'swap_strike', add it (manual strike change).
+-- (ALTER TYPE ADD VALUE cannot run inside a DO block, so it's a plain statement.)
+alter type batting_event_type add value if not exists 'swap_strike';
 
 -- Shared global sequence: deliveries and batting_events draw from ONE sequence
 -- so their `seq` values interleave in true chronological order (the engine
@@ -67,6 +70,19 @@ create table if not exists teams (
   color      text default '#59C749',
   created_at timestamptz not null default now()
 );
+
+-- ───────────── TEAM ROSTERS ─────────────
+-- Persistent team ↔ player membership. A player can belong to many teams;
+-- match lineups (match_players) pre-fill from a team's roster but are
+-- independent, so roster changes never rewrite historical scorecards.
+create table if not exists team_players (
+  team_id    uuid not null references teams(id) on delete cascade,
+  player_id  uuid not null references players(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (team_id, player_id)
+);
+create index if not exists team_players_team_idx on team_players (team_id);
+create index if not exists team_players_player_idx on team_players (player_id);
 
 -- ───────────── MATCHES ─────────────
 create table if not exists matches (
@@ -169,6 +185,7 @@ create index if not exists batting_events_innings_seq_idx on batting_events (inn
 -- ════════════════════════════════════════════════════════════════
 alter table players        enable row level security;
 alter table teams          enable row level security;
+alter table team_players   enable row level security;
 alter table matches        enable row level security;
 alter table match_players  enable row level security;
 alter table innings        enable row level security;
@@ -178,7 +195,7 @@ alter table batting_events enable row level security;
 do $$
 declare t text;
 begin
-  foreach t in array array['players','teams','matches','match_players','innings','deliveries','batting_events']
+  foreach t in array array['players','teams','team_players','matches','match_players','innings','deliveries','batting_events']
   loop
     execute format('drop policy if exists "public_select_%1$s" on %1$s', t);
     execute format('create policy "public_select_%1$s" on %1$s for select using (true)', t);

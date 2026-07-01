@@ -4,6 +4,7 @@ import { AdminShell } from "@/components/admin/AdminShell";
 import { createReadClient } from "@/lib/supabase/server";
 import { Pill, LiveDot, EmptyState, Avatar } from "@/components/ui/primitives";
 import { MatchDeleteButton } from "@/components/admin/MatchDeleteButton";
+import { RepeatMatchButton } from "@/components/admin/RepeatMatchButton";
 import { formatDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -30,9 +31,12 @@ export default async function AdminDashboard() {
     <AdminShell>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-2xl font-bold text-ink">Dashboard</h1>
-        <Link href="/admin/matches/new" className="sg-btn-primary px-4 py-2.5 text-sm">
-          + New Match
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {(matches ?? []).length > 0 && <RepeatMatchButton />}
+          <Link href="/admin/matches/new" className="sg-btn-primary px-4 py-2.5 text-sm">
+            + New Match
+          </Link>
+        </div>
       </div>
 
       {pending && pending.length > 0 && (

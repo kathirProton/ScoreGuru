@@ -199,7 +199,7 @@ function FilterChip({ href, label, active }: { href: string; label: string; acti
     <Link
       href={href}
       className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-        active ? "bg-brand text-brand-900 shadow-glow" : "bg-white border border-line text-ink-soft hover:bg-cream-200"
+        active ? "bg-brand text-brand-900 shadow-glow" : "bg-cream-200 border border-line text-ink-soft hover:bg-cream-200"
       }`}
     >
       {label}

@@ -2,6 +2,7 @@ import type { Tables, Enums } from "./database.types";
 
 export type Player = Tables<"players">;
 export type Team = Tables<"teams">;
+export type TeamPlayer = Tables<"team_players">;
 export type Match = Tables<"matches">;
 export type MatchPlayer = Tables<"match_players">;
 export type Innings = Tables<"innings">;

@@ -10,14 +10,14 @@ function Toggle({ label, hint, value, onChange }: { label: string; hint: string;
     <button
       type="button"
       onClick={() => onChange(!value)}
-      className="flex w-full items-center justify-between rounded-xl border border-line bg-white p-3.5 text-left"
+      className="flex w-full items-center justify-between rounded-xl border border-line bg-cream-200 p-3.5 text-left"
     >
       <span>
         <span className="block font-medium text-ink">{label}</span>
         <span className="block text-xs text-ink-muted">{hint}</span>
       </span>
       <span className={`relative h-6 w-11 shrink-0 rounded-full transition ${value ? "bg-brand" : "bg-cream-300"}`}>
-        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${value ? "left-[22px]" : "left-0.5"}`} />
+        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-ink shadow transition ${value ? "left-[22px]" : "left-0.5"}`} />
       </span>
     </button>
   );
@@ -67,7 +67,7 @@ function LineupPicker({
               disabled={isDisabled}
               onClick={() => toggle(p.id)}
               className={`flex w-full items-center gap-2.5 rounded-xl border p-2 text-left transition ${
-                isSel ? "border-brand bg-brand-50" : "border-line bg-white"
+                isSel ? "border-brand bg-brand-50" : "border-line bg-cream-200"
               } ${isDisabled ? "opacity-30" : ""}`}
             >
               <Avatar name={p.name} photo={p.photo_url} size={32} />
@@ -81,8 +81,17 @@ function LineupPicker({
   );
 }
 
-export function NewMatchForm({ teams, players }: { teams: Team[]; players: Player[] }) {
+export function NewMatchForm({
+  teams,
+  players,
+  rosters,
+}: {
+  teams: Team[];
+  players: Player[];
+  rosters: Record<string, string[]>;
+}) {
   const router = useRouter();
+  const approvedIds = new Set(players.map((p) => p.id));
   const [name, setName] = useState("");
   const [overs, setOvers] = useState("6");
   const [venue, setVenue] = useState("");
@@ -101,6 +110,20 @@ export function NewMatchForm({ teams, players }: { teams: Team[]; players: Playe
     const next = new Set(set);
     next.has(id) ? next.delete(id) : next.add(id);
     setter(next);
+  };
+
+  // Selecting a team pre-fills its lineup from the roster (approved players
+  // only, minus anyone already picked for the other side). Still fully editable.
+  const rosterFor = (teamId: string, otherLineup: Set<string>) =>
+    new Set((rosters[teamId] ?? []).filter((id) => approvedIds.has(id) && !otherLineup.has(id)));
+
+  const selectTeamA = (id: string) => {
+    setTeamA(id);
+    setLineupA(id ? rosterFor(id, lineupB) : new Set());
+  };
+  const selectTeamB = (id: string) => {
+    setTeamB(id);
+    setLineupB(id ? rosterFor(id, lineupA) : new Set());
   };
 
   async function submit(e: React.FormEvent) {
@@ -161,7 +184,7 @@ export function NewMatchForm({ teams, players }: { teams: Team[]; players: Playe
           label="Team A"
           team={teamA}
           teams={teams.filter((t) => t.id !== teamB)}
-          onTeam={setTeamA}
+          onTeam={selectTeamA}
           players={players}
           selected={lineupA}
           toggle={(id) => toggle(lineupA, setLineupA, id)}
@@ -171,7 +194,7 @@ export function NewMatchForm({ teams, players }: { teams: Team[]; players: Playe
           label="Team B"
           team={teamB}
           teams={teams.filter((t) => t.id !== teamA)}
-          onTeam={setTeamB}
+          onTeam={selectTeamB}
           players={players}
           selected={lineupB}
           toggle={(id) => toggle(lineupB, setLineupB, id)}

@@ -1,17 +1,20 @@
 import { ensureAdmin } from "@/lib/auth";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { TeamsAdmin } from "@/components/admin/TeamsAdmin";
-import { createReadClient } from "@/lib/supabase/server";
+import { getTeams, getPlayers, getRosterMap } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminTeamsPage() {
   await ensureAdmin();
-  const supabase = createReadClient();
-  const { data: teams } = await supabase.from("teams").select("*").order("name");
+  const [teams, players, rosters] = await Promise.all([
+    getTeams(),
+    getPlayers(["approved"]),
+    getRosterMap(),
+  ]);
   return (
     <AdminShell>
-      <TeamsAdmin teams={teams ?? []} />
+      <TeamsAdmin teams={teams} players={players} rosters={rosters} />
     </AdminShell>
   );
 }

@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 html {
@@ -12,8 +12,8 @@ html {
 }
 
 body {
-  background-color: #fffdf1;
-  color: #16231a;
+  background-color: #141414;
+  color: #f3f5f1;
   font-feature-settings: "ss01", "cv01";
   overscroll-behavior-y: none;
 }
@@ -29,7 +29,7 @@ body {
 
 @layer components {
   .sg-card {
-    @apply rounded-2xl bg-white/80 border border-line shadow-card backdrop-blur-sm;
+    @apply rounded-2xl bg-surface border border-line shadow-card;
   }
   .sg-chip {
     @apply inline-flex items-center justify-center rounded-full text-xs font-semibold tabular-nums;
@@ -39,17 +39,17 @@ body {
       active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none select-none;
   }
   .sg-btn-primary {
-    @apply sg-btn bg-brand text-brand-900 shadow-glow hover:brightness-105;
+    @apply sg-btn bg-brand text-brand-900 shadow-glow hover:brightness-110;
   }
   .sg-btn-ghost {
-    @apply sg-btn bg-white text-ink border border-line hover:bg-cream-200;
+    @apply sg-btn bg-cream-200 text-ink border border-line hover:bg-cream-300;
   }
   .sg-btn-danger {
-    @apply sg-btn bg-wicket text-white hover:brightness-105;
+    @apply sg-btn bg-wicket text-white hover:brightness-110;
   }
   .sg-input {
-    @apply w-full rounded-xl border border-line bg-white px-4 py-3 text-ink
-      placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200;
+    @apply w-full rounded-xl border border-line bg-cream-200 px-4 py-3 text-ink
+      placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand/40;
   }
   .sg-label {
     @apply block text-sm font-medium text-ink-soft mb-1.5;
@@ -60,7 +60,7 @@ body {
 .skeleton {
   position: relative;
   overflow: hidden;
-  background: #ece8d4;
+  background: #1e1e1e;
 }
 .skeleton::after {
   content: "";
@@ -70,7 +70,7 @@ body {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.6),
+    rgba(255, 255, 255, 0.08),
     transparent
   );
   animation: shimmer 1.5s infinite;

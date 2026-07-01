@@ -324,6 +324,14 @@ export function deriveInnings(input: DeriveInput): InningsState {
   for (const item of merged) {
     if (item.kind === "batting") {
       const e = item.e;
+      // Manual strike swap: flip the two batsmen at the crease. Carries no
+      // player of its own, so don't materialise a batsman record for it.
+      if (e.event_type === "swap_strike") {
+        if (striker !== null && nonStriker !== null) {
+          [striker, nonStriker] = [nonStriker, striker];
+        }
+        continue;
+      }
       const bat = getBat(e.player_id);
       if (e.event_type === "in") {
         // place into the empty slot; both empty at start → use at_end hint.
@@ -583,7 +591,14 @@ export function deriveInnings(input: DeriveInput): InningsState {
     oversComplete,
     targetReached,
     isInningsOver,
-    loneBatsman: nonStriker === null && striker !== null && lastManStands,
+    // Genuine last-man-stands: exactly one batsman remains because everyone
+    // else is out. A transient empty slot (e.g. straight after a run-out with
+    // batsmen still on the bench) is NOT lone — a replacement must be chosen.
+    loneBatsman:
+      lastManStands &&
+      striker !== null &&
+      nonStriker === null &&
+      wickets >= battingTeamSize - 1,
   };
 }
 

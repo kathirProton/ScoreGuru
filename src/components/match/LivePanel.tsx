@@ -16,7 +16,7 @@ export function LivePanel({ view }: { view: MatchView }) {
   const bowler = s.bowlers.find((b) => b.playerId === s.currentBowlerId);
 
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-brand-50 via-white to-cream-200 p-5 shadow-card">
+    <div className="relative overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-brand-50 via-cream-100 to-cream-200 p-5 shadow-card">
       <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-brand/15 blur-2xl" />
 
       <div className="relative">
@@ -60,7 +60,7 @@ export function LivePanel({ view }: { view: MatchView }) {
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="mt-3 inline-flex items-center gap-2 rounded-full bg-gold px-3 py-1 text-xs font-bold uppercase tracking-wide text-white shadow-sm"
+            className="mt-3 inline-flex items-center gap-2 rounded-full bg-gold px-3 py-1 text-xs font-bold uppercase tracking-wide text-cream-50 shadow-sm"
           >
             ⚡ Free Hit
           </motion.div>
@@ -73,7 +73,7 @@ export function LivePanel({ view }: { view: MatchView }) {
               b && (
                 <div
                   key={b.playerId}
-                  className="flex items-center justify-between rounded-xl bg-white/70 px-3 py-2"
+                  className="flex items-center justify-between rounded-xl bg-cream-200/60 px-3 py-2"
                 >
                   <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
                     {i === 0 && <span className="text-brand-600">●</span>}
@@ -90,7 +90,7 @@ export function LivePanel({ view }: { view: MatchView }) {
 
         {/* Bowler */}
         {bowler && (
-          <div className="mt-1.5 flex items-center justify-between rounded-xl bg-white/70 px-3 py-2">
+          <div className="mt-1.5 flex items-center justify-between rounded-xl bg-cream-200/60 px-3 py-2">
             <span className="text-sm font-medium text-ink">🎯 {playerName(view, bowler.playerId)}</span>
             <span className="font-mono text-sm tabular-nums text-ink-soft">
               {bowler.wickets}/{bowler.runsConceded}{" "}

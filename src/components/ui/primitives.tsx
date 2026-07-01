@@ -79,7 +79,7 @@ export function Pill({
     brand: "bg-brand-100 text-brand-700",
     gold: "bg-gold-soft text-gold-dark",
     wicket: "bg-wicket-soft text-wicket-dark",
-    boundary: "bg-blue-50 text-boundary",
+    boundary: "bg-boundary/15 text-boundary",
   };
   return (
     <span className={`sg-chip px-2.5 py-1 ${tones[tone]}`}>{children}</span>

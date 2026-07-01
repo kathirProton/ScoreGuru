@@ -2,16 +2,16 @@ import Link from "next/link";
 import { ensureAdmin } from "@/lib/auth";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { NewMatchForm } from "@/components/admin/NewMatchForm";
-import { createReadClient } from "@/lib/supabase/server";
+import { getTeams, getPlayers, getRosterMap } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewMatchPage() {
   await ensureAdmin();
-  const supabase = createReadClient();
-  const [{ data: teams }, { data: players }] = await Promise.all([
-    supabase.from("teams").select("*").order("name"),
-    supabase.from("players").select("*").eq("status", "approved").order("name"),
+  const [teams, players, rosters] = await Promise.all([
+    getTeams(),
+    getPlayers(["approved"]),
+    getRosterMap(),
   ]);
 
   if (!teams || teams.length < 2) {
@@ -31,7 +31,7 @@ export default async function NewMatchPage() {
   return (
     <AdminShell>
       <h1 className="mb-5 font-display text-2xl font-bold text-ink">New match</h1>
-      <NewMatchForm teams={teams} players={players ?? []} />
+      <NewMatchForm teams={teams} players={players ?? []} rosters={rosters} />
     </AdminShell>
   );
 }

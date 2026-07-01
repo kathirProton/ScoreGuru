@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getBrowserClient } from "@/lib/supabase/browser";
 import { fetchMatchBundle, MatchBundle } from "@/lib/cricket/load";
@@ -13,10 +13,19 @@ import {
   selectOpeningBatsmen,
   selectNextBatsman,
   retireBatsman,
+  swapStrike,
+  replaceBatsman,
   startSecondInnings,
 } from "@/lib/actions/scoring";
 import { abandonMatch, restartMatch, deleteMatch } from "@/lib/actions/matches";
-import type { Player, WicketType, ExtraType } from "@/lib/types";
+import type {
+  Player,
+  WicketType,
+  ExtraType,
+  Delivery,
+  BattingEvent,
+  BattingEventType,
+} from "@/lib/types";
 import { WICKET_LABELS } from "@/lib/types";
 import { bowlerOvers } from "@/lib/cricket/engine";
 
@@ -41,10 +50,11 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
 
   const [extra, setExtra] = useState<null | ExtraType>(null);
   const [wicketOpen, setWicketOpen] = useState(false);
-  const [retireOpen, setRetireOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [restartOpen, setRestartOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const matchId = bundle.match.id;
 
@@ -53,6 +63,8 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
     if (fresh) setBundle(fresh);
   }, [matchId]);
 
+  // Blocking action (used for rare status changes: abandon / restart / delete
+  // / start-2nd-innings / undo on a finished screen). Shows a spinner.
   const act = useCallback(
     async (fn: () => Promise<{ error?: string; ok?: boolean } | void>) => {
       setBusy(true);
@@ -68,6 +80,46 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
       }
     },
     [refetch]
+  );
+
+  // Optimistic mutation: the local bundle is updated instantly (the engine is
+  // pure, so the derived UI advances with zero latency) while the server write
+  // runs in a serialized background queue. When the queue drains we reconcile
+  // once against the authoritative DB state (real seqs, innings transitions,
+  // POTM, …). This is what removes the 2-3s per-ball lag on free-tier hosting.
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  const pending = useRef(0);
+  const enqueue = useCallback(
+    (server: () => Promise<{ error?: string; ok?: boolean } | void>) => {
+      pending.current += 1;
+      setSyncing(true);
+      chain.current = chain.current
+        .then(async () => {
+          const res = await server();
+          if (res && "error" in res && res.error) setError(res.error);
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : "Sync failed — retry."))
+        .finally(async () => {
+          pending.current -= 1;
+          if (pending.current === 0) {
+            await refetch();
+            setSyncing(false);
+          }
+        });
+    },
+    [refetch]
+  );
+
+  const mutate = useCallback(
+    (
+      applyOptimistic: (b: MatchBundle) => MatchBundle,
+      server: () => Promise<{ error?: string; ok?: boolean } | void>
+    ) => {
+      setError(null);
+      setBundle((prev) => applyOptimistic(prev));
+      enqueue(server);
+    },
+    [enqueue]
   );
 
   const renderMatchOptions = () => (
@@ -185,8 +237,59 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
     !s.isInningsOver;
   const needBowler = !s.isInningsOver && !needOpeners && !needOneBatsman && bowlerForBall === null;
 
+  const inningsId = current.innings.id;
   const record = (payload: DeliveryPayload) =>
-    act(() => recordDelivery(current.innings.id, bowlerForBall!, payload));
+    mutate(
+      (b) => appendOptimisticDelivery(b, payload, selectedBowler),
+      () => recordDelivery(inningsId, bowlerForBall!, payload)
+    );
+
+  // Optimistic undo — drop the most recent event locally, then persist.
+  const undo = () =>
+    mutate(
+      (b) => removeLastEvent(b),
+      () => undoLast(inningsId)
+    );
+
+  const pickOpeners = (a: string, b2: string) =>
+    mutate(
+      (b) =>
+        appendOptimisticEvents(b, inningsId, [
+          { player_id: a, event_type: "in", at_end: "striker" },
+          { player_id: b2, event_type: "in", at_end: "non_striker" },
+        ]),
+      () => selectOpeningBatsmen(inningsId, a, b2)
+    );
+
+  const pickNextBatsman = (id: string) =>
+    mutate(
+      (b) => appendOptimisticEvents(b, inningsId, [{ player_id: id, event_type: "in", at_end: nextEnd(b) }]),
+      () => selectNextBatsman(inningsId, id)
+    );
+
+  const doSwapStrike = () =>
+    mutate(
+      (b) =>
+        appendOptimisticEvents(b, inningsId, [
+          { player_id: s.strikerId!, event_type: "swap_strike" },
+        ]),
+      () => swapStrike(inningsId)
+    );
+
+  const doRetire = (playerId: string, out: boolean) =>
+    mutate(
+      (b) =>
+        appendOptimisticEvents(b, inningsId, [
+          { player_id: playerId, event_type: out ? "retired_out" : "retired_not_out" },
+        ]),
+      () => retireBatsman(inningsId, playerId, out)
+    );
+
+  const doReplace = (outgoingId: string, incomingId: string, incomingOnStrike: boolean) =>
+    mutate(
+      (b) => appendOptimisticReplace(b, inningsId, outgoingId, incomingId, incomingOnStrike),
+      () => replaceBatsman(inningsId, outgoingId, incomingId, incomingOnStrike)
+    );
 
   return (
     <div className="space-y-4">
@@ -196,6 +299,7 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
           <span className="font-display font-bold text-ink">{current.battingTeam?.name}</span>
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-wicket">
             <LiveDot /> {current.innings.is_super_over ? "SUPER OVER" : `Innings ${current.innings.innings_number}`}
+            {syncing && <span className="ml-1 text-ink-faint" title="Saving…">⟳</span>}
           </span>
         </div>
         <div className="mt-1 flex items-end gap-2">
@@ -212,7 +316,7 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
           </p>
         )}
         {s.nextIsFreeHit && (
-          <span className="mt-2 inline-flex rounded-full bg-gold px-3 py-1 text-xs font-bold uppercase text-white">
+          <span className="mt-2 inline-flex rounded-full bg-gold px-3 py-1 text-xs font-bold uppercase text-cream-50">
             ⚡ Free Hit
           </span>
         )}
@@ -258,9 +362,9 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
           </button>
         </div>
       ) : needOpeners ? (
-        <OpenerPicker players={battingPlayers} busy={busy} view={view} onPick={(a, b) => act(() => selectOpeningBatsmen(current.innings.id, a, b))} />
+        <OpenerPicker players={battingPlayers} busy={busy} view={view} onPick={pickOpeners} />
       ) : needOneBatsman ? (
-        <SinglePicker title="Select next batsman" players={availableBatsmen} busy={busy} onPick={(id) => act(() => selectNextBatsman(current.innings.id, id))} />
+        <SinglePicker title="Select next batsman" players={availableBatsmen} busy={busy} onPick={pickNextBatsman} />
       ) : needBowler ? (
         <BowlerPicker
           players={bowlingPlayers}
@@ -279,8 +383,8 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
           onRun={(n) => record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false })}
           onExtra={setExtra}
           onWicket={() => setWicketOpen(true)}
-          onRetire={() => setRetireOpen(true)}
-          onUndo={() => act(() => undoLast(current.innings.id))}
+          onManage={() => setManageOpen(true)}
+          onUndo={undo}
           onAbandon={() => setAbandonOpen(true)}
         />
       )}
@@ -299,14 +403,17 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
         onSubmit={(p) => { setWicketOpen(false); record(p); }}
       />
 
-      <RetireModal
-        open={retireOpen}
-        onClose={() => setRetireOpen(false)}
+      <ManageBatsmenModal
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
         striker={s.strikerId}
         nonStriker={s.nonStrikerId}
+        bench={availableBatsmen}
         view={view}
         busy={busy}
-        onSubmit={(playerId, out) => { setRetireOpen(false); act(() => retireBatsman(current.innings.id, playerId, out)); }}
+        onSwapStrike={() => doSwapStrike()}
+        onReplace={(outgoing, incoming, onStrike) => { setManageOpen(false); doReplace(outgoing, incoming, onStrike); }}
+        onRetire={(playerId, out) => { setManageOpen(false); doRetire(playerId, out); }}
       />
 
       <Modal open={abandonOpen} onClose={() => setAbandonOpen(false)} title="Abandon match?">
@@ -347,7 +454,7 @@ function PlayerRow({ p, onClick, disabled, badge }: { p: Player; onClick: () => 
       disabled={disabled}
       onClick={onClick}
       className={`flex w-full items-center gap-2.5 rounded-xl border p-2.5 text-left transition ${
-        badge ? "border-brand bg-brand-50" : "border-line bg-white"
+        badge ? "border-brand bg-brand-50" : "border-line bg-cream-200"
       } ${disabled ? "opacity-30" : "active:scale-[0.99]"}`}
     >
       <Avatar name={p.name} photo={p.photo_url} size={36} />
@@ -436,13 +543,13 @@ function BowlerPicker({
 }
 
 function ScoringPad({
-  busy, onRun, onExtra, onWicket, onRetire, onUndo, onAbandon,
+  busy, onRun, onExtra, onWicket, onManage, onUndo, onAbandon,
 }: {
   busy: boolean;
   onRun: (n: number) => void;
   onExtra: (e: ExtraType) => void;
   onWicket: () => void;
-  onRetire: () => void;
+  onManage: () => void;
   onUndo: () => void;
   onAbandon: () => void;
 }) {
@@ -455,7 +562,7 @@ function ScoringPad({
             disabled={busy}
             onClick={() => onRun(n)}
             className={`sg-btn h-16 text-2xl font-bold ${
-              n === 4 ? "bg-boundary text-white" : n === 6 ? "bg-brand text-brand-900 shadow-glow" : "border border-line bg-white text-ink"
+              n === 4 ? "bg-boundary text-white" : n === 6 ? "bg-brand text-brand-900 shadow-glow" : "border border-line bg-cream-200 text-ink"
             }`}
           >
             {n}
@@ -471,7 +578,7 @@ function ScoringPad({
       </div>
       <div className="grid grid-cols-3 gap-2.5">
         <button disabled={busy} onClick={onUndo} className="sg-btn-ghost h-12 text-sm">↩ Undo</button>
-        <button disabled={busy} onClick={onRetire} className="sg-btn-ghost h-12 text-sm">Retire</button>
+        <button disabled={busy} onClick={onManage} className="sg-btn-ghost h-12 text-sm">⇄ Batsmen</button>
         <button disabled={busy} onClick={onAbandon} className="sg-btn-ghost h-12 text-sm text-wicket">Abandon</button>
       </div>
     </div>
@@ -485,7 +592,7 @@ function NumberRow({ options, value, onChange }: { options: number[]; value: num
         <button
           key={n}
           onClick={() => onChange(n)}
-          className={`sg-btn h-11 w-11 text-lg font-bold ${value === n ? "bg-brand text-brand-900" : "border border-line bg-white text-ink"}`}
+          className={`sg-btn h-11 w-11 text-lg font-bold ${value === n ? "bg-brand text-brand-900" : "border border-line bg-cream-200 text-ink"}`}
         >
           {n}
         </button>
@@ -572,7 +679,7 @@ function WicketModal({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-2">
           {types.map((t) => (
-            <button key={t} onClick={() => setType(t)} className={`rounded-xl border p-2.5 text-sm font-medium transition ${type === t ? "border-wicket bg-wicket-soft text-wicket-dark" : "border-line bg-white text-ink"}`}>
+            <button key={t} onClick={() => setType(t)} className={`rounded-xl border p-2.5 text-sm font-medium transition ${type === t ? "border-wicket bg-wicket-soft text-wicket-dark" : "border-line bg-cream-200 text-ink"}`}>
               {WICKET_LABELS[t]}
             </button>
           ))}
@@ -583,7 +690,7 @@ function WicketModal({
               <p className="sg-label">Who is out?</p>
               <div className="grid grid-cols-2 gap-2">
                 {[striker, nonStriker].filter(Boolean).map((id) => (
-                  <button key={id} onClick={() => setDismissed(id!)} className={`rounded-xl border p-2.5 text-sm transition ${dismissed === id ? "border-brand bg-brand-50" : "border-line bg-white"}`}>
+                  <button key={id} onClick={() => setDismissed(id!)} className={`rounded-xl border p-2.5 text-sm transition ${dismissed === id ? "border-brand bg-brand-50" : "border-line bg-cream-200"}`}>
                     {playerName(view, id)}
                   </button>
                 ))}
@@ -624,37 +731,217 @@ function WicketModal({
   );
 }
 
-function RetireModal({
-  open, onClose, striker, nonStriker, view, busy, onSubmit,
+/**
+ * Crease management: swap strike, replace an at-crease batsman with one from
+ * the bench (or a returning retired-not-out batsman, choosing who takes
+ * strike), or retire a batsman (not-out = can return, or out = counts as a
+ * wicket). Covers the "a batsman bats a couple of balls then leaves" case.
+ */
+function ManageBatsmenModal({
+  open, onClose, striker, nonStriker, bench, view, busy, onSwapStrike, onReplace, onRetire,
 }: {
   open: boolean;
   onClose: () => void;
   striker: string | null;
   nonStriker: string | null;
+  bench: Player[];
   view: MV;
   busy: boolean;
-  onSubmit: (playerId: string, out: boolean) => void;
+  onSwapStrike: () => void;
+  onReplace: (outgoingId: string, incomingId: string, incomingOnStrike: boolean) => void;
+  onRetire: (playerId: string, out: boolean) => void;
 }) {
-  const [who, setWho] = useState<string | null>(striker);
+  const crease = [striker, nonStriker].filter(Boolean) as string[];
+  const [mode, setMode] = useState<"home" | "replace" | "retire">("home");
+  const [outgoing, setOutgoing] = useState<string | null>(null);
+  const [incoming, setIncoming] = useState<string | null>(null);
+  const [onStrike, setOnStrike] = useState(true);
+
+  const close = () => { setMode("home"); setOutgoing(null); setIncoming(null); setOnStrike(true); onClose(); };
+  const bothIn = striker !== null && nonStriker !== null;
+
   return (
-    <Modal open={open} onClose={onClose} title="Retire batsman">
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-2">
-          {[striker, nonStriker].filter(Boolean).map((id) => (
-            <button key={id} onClick={() => setWho(id!)} className={`rounded-xl border p-2.5 text-sm transition ${who === id ? "border-brand bg-brand-50" : "border-line bg-white"}`}>
-              {playerName(view, id)}
+    <Modal open={open} onClose={close} title="Manage batsmen">
+      {mode === "home" && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-line bg-cream-200 p-3 text-sm">
+            <div className="flex justify-between"><span className="text-ink">● {playerName(view, striker)}</span><span className="text-ink-muted">on strike</span></div>
+            {nonStriker && <div className="mt-1 flex justify-between"><span className="text-ink">{playerName(view, nonStriker)}</span><span className="text-ink-muted">non-striker</span></div>}
+          </div>
+          <button disabled={busy || !bothIn} onClick={() => { onSwapStrike(); }} className="sg-btn-ghost w-full py-3 text-sm">
+            ⇄ Swap strike
+          </button>
+          <button disabled={busy || crease.length === 0 || bench.length === 0} onClick={() => setMode("replace")} className="sg-btn-ghost w-full py-3 text-sm">
+            ⟳ Replace a batsman
+            <span className="block text-xs text-ink-muted">{bench.length === 0 ? "no bench batsmen available" : "sub in a bench / returning batsman"}</span>
+          </button>
+          <button disabled={busy || crease.length === 0} onClick={() => setMode("retire")} className="sg-btn-ghost w-full py-3 text-sm">
+            🚪 Retire a batsman
+          </button>
+        </div>
+      )}
+
+      {mode === "replace" && (
+        <div className="space-y-4">
+          <div>
+            <p className="sg-label">Who is leaving?</p>
+            <div className="grid grid-cols-2 gap-2">
+              {crease.map((id) => (
+                <button key={id} onClick={() => setOutgoing(id)} className={`rounded-xl border p-2.5 text-sm transition ${outgoing === id ? "border-brand bg-brand-50" : "border-line bg-cream-200"}`}>
+                  {playerName(view, id)}{id === striker ? " ●" : ""}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="sg-label">Who comes in?</p>
+            <div className="max-h-48 space-y-1.5 overflow-y-auto">
+              {bench.map((p) => (
+                <PlayerRow key={p.id} p={p} badge={incoming === p.id ? "coming in" : null} onClick={() => setIncoming(p.id)} />
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center justify-between rounded-xl border border-line bg-cream-200 p-3 text-sm">
+            <span className="text-ink">New batsman takes strike</span>
+            <input type="checkbox" checked={onStrike} onChange={(e) => setOnStrike(e.target.checked)} className="h-5 w-5 accent-brand" />
+          </label>
+          <div className="flex gap-2">
+            <button onClick={() => setMode("home")} className="sg-btn-ghost flex-1 py-3">Back</button>
+            <button disabled={busy || !outgoing || !incoming} onClick={() => outgoing && incoming && onReplace(outgoing, incoming, onStrike)} className="sg-btn-primary flex-1 py-3">
+              Confirm
             </button>
-          ))}
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <button disabled={busy || !who} onClick={() => who && onSubmit(who, false)} className="sg-btn-ghost py-3">
-            Retired — not out<span className="block text-xs text-ink-muted">can return later</span>
-          </button>
-          <button disabled={busy || !who} onClick={() => who && onSubmit(who, true)} className="sg-btn-danger py-3">
-            Retired out<span className="block text-xs opacity-80">counts as wicket</span>
-          </button>
+      )}
+
+      {mode === "retire" && (
+        <div className="space-y-4">
+          <div>
+            <p className="sg-label">Who is retiring?</p>
+            <div className="grid grid-cols-2 gap-2">
+              {crease.map((id) => (
+                <button key={id} onClick={() => setOutgoing(id)} className={`rounded-xl border p-2.5 text-sm transition ${outgoing === id ? "border-brand bg-brand-50" : "border-line bg-cream-200"}`}>
+                  {playerName(view, id)}{id === striker ? " ●" : ""}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button disabled={busy || !outgoing} onClick={() => outgoing && onRetire(outgoing, false)} className="sg-btn-ghost py-3">
+              Retired — not out<span className="block text-xs text-ink-muted">can return later</span>
+            </button>
+            <button disabled={busy || !outgoing} onClick={() => outgoing && onRetire(outgoing, true)} className="sg-btn-danger py-3">
+              Retired out<span className="block text-xs opacity-80">counts as wicket</span>
+            </button>
+          </div>
+          <button onClick={() => setMode("home")} className="sg-btn-ghost w-full py-3">Back</button>
         </div>
-      </div>
+      )}
     </Modal>
   );
+}
+
+// ── optimistic engine helpers ────────────────────────────────────
+// Mirror the server's field computation so the local bundle advances exactly
+// like the DB will. Any drift is corrected by the reconcile refetch.
+function maxSeq(b: MatchBundle): number {
+  let m = 0;
+  for (const d of b.deliveries) if (d.seq > m) m = d.seq;
+  for (const e of b.events) if (e.seq > m) m = e.seq;
+  return m;
+}
+
+function appendOptimisticDelivery(
+  b: MatchBundle,
+  payload: DeliveryPayload,
+  selectedBowler: { over: number; id: string } | null
+): MatchBundle {
+  const ci = buildMatchView(b).currentInnings;
+  if (!ci) return b;
+  const s = ci.state;
+  const bowler = s.currentBowlerId ?? (selectedBowler?.over === s.currentOverNumber ? selectedBowler.id : null);
+  if (!bowler || s.strikerId === null) return b; // let the server place it
+  const legal = payload.extra_type === "none" || payload.extra_type === "bye" || payload.extra_type === "leg_bye";
+  const seq = maxSeq(b) + 1;
+  const d: Delivery = {
+    id: `opt-d-${seq}`,
+    seq,
+    innings_id: ci.innings.id,
+    over_number: s.currentOverNumber,
+    ball_in_over: s.ballsThisOver + 1,
+    legal_ball_number: s.legalBalls + (legal ? 1 : 0),
+    bowler_id: bowler,
+    striker_id: s.strikerId,
+    non_striker_id: s.nonStrikerId ?? s.strikerId,
+    runs_off_bat: payload.runs_off_bat,
+    extra_type: payload.extra_type,
+    extra_runs: payload.extra_runs,
+    is_wicket: payload.is_wicket,
+    wicket_type: payload.is_wicket ? payload.wicket_type ?? null : null,
+    dismissed_player_id: payload.is_wicket ? payload.dismissed_player_id ?? s.strikerId : null,
+    fielder_id: payload.fielder_id ?? null,
+    is_free_hit: s.nextIsFreeHit,
+    created_at: new Date().toISOString(),
+  };
+  return { ...b, deliveries: [...b.deliveries, d] };
+}
+
+function appendOptimisticEvents(
+  b: MatchBundle,
+  inningsId: string,
+  events: { player_id: string; event_type: BattingEventType; at_end?: string | null }[]
+): MatchBundle {
+  let seq = maxSeq(b);
+  const rows: BattingEvent[] = events.map((e) => {
+    seq += 1;
+    return {
+      id: `opt-e-${seq}`,
+      seq,
+      innings_id: inningsId,
+      player_id: e.player_id,
+      event_type: e.event_type,
+      at_end: e.at_end ?? null,
+      created_at: new Date().toISOString(),
+    };
+  });
+  return { ...b, events: [...b.events, ...rows] };
+}
+
+/** Which empty end a next batsman should fill (mirrors selectNextBatsman). */
+function nextEnd(b: MatchBundle): "striker" | "non_striker" {
+  const s = buildMatchView(b).currentInnings?.state;
+  if (!s) return "striker";
+  return s.strikerId === null ? "striker" : s.nonStrikerId === null ? "non_striker" : "striker";
+}
+
+/** Mirror replaceBatsman: retire outgoing not-out, bring incoming in, set strike. */
+function appendOptimisticReplace(
+  b: MatchBundle,
+  inningsId: string,
+  outgoingId: string,
+  incomingId: string,
+  incomingOnStrike: boolean
+): MatchBundle {
+  const s = buildMatchView(b).currentInnings?.state;
+  if (!s) return b;
+  const outgoingWasStriker = s.strikerId === outgoingId;
+  const events: { player_id: string; event_type: BattingEventType; at_end?: string | null }[] = [
+    { player_id: outgoingId, event_type: "retired_not_out" },
+    { player_id: incomingId, event_type: "in", at_end: outgoingWasStriker ? "striker" : "non_striker" },
+  ];
+  if (incomingOnStrike !== outgoingWasStriker) {
+    events.push({ player_id: incomingId, event_type: "swap_strike" });
+  }
+  return appendOptimisticEvents(b, inningsId, events);
+}
+
+/** Optimistic undo: drop the single highest-seq row (delivery or batting event). */
+function removeLastEvent(b: MatchBundle): MatchBundle {
+  const lastD = b.deliveries.length ? b.deliveries[b.deliveries.length - 1] : null;
+  const lastE = b.events.length ? b.events[b.events.length - 1] : null;
+  const dSeq = lastD?.seq ?? -1;
+  const eSeq = lastE?.seq ?? -1;
+  if (dSeq < 0 && eSeq < 0) return b;
+  if (dSeq >= eSeq) return { ...b, deliveries: b.deliveries.slice(0, -1) };
+  return { ...b, events: b.events.slice(0, -1) };
 }

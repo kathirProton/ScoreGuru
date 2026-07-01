@@ -222,11 +222,29 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["teams"]["Insert"]>
         Relationships: []
       }
+      team_players: {
+        Row: {
+          created_at: string
+          player_id: string
+          team_id: string
+        }
+        Insert: {
+          created_at?: string
+          player_id: string
+          team_id: string
+        }
+        Update: Partial<Database["public"]["Tables"]["team_players"]["Insert"]>
+        Relationships: []
+      }
     }
     Views: { [_ in never]: never }
     Functions: { [_ in never]: never }
     Enums: {
-      batting_event_type: "in" | "retired_not_out" | "retired_out"
+      batting_event_type:
+        | "in"
+        | "retired_not_out"
+        | "retired_out"
+        | "swap_strike"
       batting_hand: "right" | "left"
       extra_type: "none" | "wide" | "no_ball" | "bye" | "leg_bye"
       match_status:

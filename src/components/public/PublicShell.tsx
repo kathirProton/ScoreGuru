@@ -5,6 +5,7 @@ import { BottomNav } from "./BottomNav";
 const desktopLinks = [
   { href: "/live", label: "Live" },
   { href: "/matches", label: "Matches" },
+  { href: "/teams", label: "Teams" },
   { href: "/players", label: "Players" },
   { href: "/stats", label: "Stats" },
   { href: "/submit-player", label: "Submit" },

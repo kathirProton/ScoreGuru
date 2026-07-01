@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
   return (
-    <div className="rounded-xl bg-white/70 border border-line p-3 text-center">
+    <div className="rounded-xl bg-cream-200/60 border border-line p-3 text-center">
       <div className={`font-display text-xl font-bold tabular-nums ${tone ?? "text-ink"}`}>{value}</div>
       <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">{label}</div>
     </div>

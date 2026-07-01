@@ -20,14 +20,20 @@ interface CreateMatchInput {
 
 export async function createMatch(input: CreateMatchInput) {
   await requireAdmin();
+  if (!input.team_a_id || !input.team_b_id)
+    return { error: "Both teams are required." };
   if (input.team_a_id === input.team_b_id)
     return { error: "Pick two different teams." };
-  if (input.lineup_a.length === 0 || input.lineup_b.length === 0)
+  // Dedupe each lineup (guards a duplicate player within one team via API).
+  const lineupA = [...new Set(input.lineup_a)];
+  const lineupB = [...new Set(input.lineup_b)];
+  if (lineupA.length === 0 || lineupB.length === 0)
     return { error: "Both teams need at least one player." };
-  const overlap = input.lineup_a.filter((p) => input.lineup_b.includes(p));
+  const overlap = lineupA.filter((p) => lineupB.includes(p));
   if (overlap.length > 0)
     return { error: "A player cannot be on both teams of the same match." };
-  if (input.overs < 1) return { error: "Overs must be at least 1." };
+  if (!Number.isInteger(input.overs) || input.overs < 1)
+    return { error: "Overs must be a whole number of at least 1." };
 
   const supabase = createServiceClient();
   const { data: match, error } = await supabase
@@ -49,12 +55,12 @@ export async function createMatch(input: CreateMatchInput) {
   if (error || !match) return { error: error?.message ?? "Failed to create match." };
 
   const rows = [
-    ...input.lineup_a.map((player_id) => ({
+    ...lineupA.map((player_id) => ({
       match_id: match.id,
       team_id: input.team_a_id,
       player_id,
     })),
-    ...input.lineup_b.map((player_id) => ({
+    ...lineupB.map((player_id) => ({
       match_id: match.id,
       team_id: input.team_b_id,
       player_id,
@@ -65,6 +71,130 @@ export async function createMatch(input: CreateMatchInput) {
 
   revalidatePath("/admin");
   return { ok: true, matchId: match.id };
+}
+
+/**
+ * Create a fresh match reusing the previous match's teams, lineups, overs,
+ * venue and rules. Starts in `setup` so the toss is taken again.
+ */
+export async function createMatchFromLast(sourceMatchId?: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+
+  let source;
+  if (sourceMatchId) {
+    const { data } = await supabase.from("matches").select("*").eq("id", sourceMatchId).single();
+    source = data;
+  } else {
+    const { data } = await supabase
+      .from("matches")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    source = data;
+  }
+  if (!source) return { error: "No previous match to copy." };
+
+  const { data: match, error } = await supabase
+    .from("matches")
+    .insert({
+      name: source.name,
+      overs: source.overs,
+      venue: source.venue,
+      team_a_id: source.team_a_id,
+      team_b_id: source.team_b_id,
+      free_hit_enabled: source.free_hit_enabled,
+      last_man_stands: source.last_man_stands,
+      block_consecutive_overs: source.block_consecutive_overs,
+      super_over_overs: source.super_over_overs,
+      status: "setup",
+    })
+    .select()
+    .single();
+  if (error || !match) return { error: error?.message ?? "Failed to create match." };
+
+  const { data: prevLineup } = await supabase
+    .from("match_players")
+    .select("team_id,player_id,batting_order")
+    .eq("match_id", sourceMatchId ?? source.id);
+  if (prevLineup && prevLineup.length > 0) {
+    await supabase
+      .from("match_players")
+      .insert(prevLineup.map((r) => ({ ...r, match_id: match.id })));
+  }
+
+  revalidatePath("/admin");
+  return { ok: true, matchId: match.id };
+}
+
+/** Has this player already batted, bowled or fielded in this match? */
+async function playerParticipated(
+  supabase: ReturnType<typeof createServiceClient>,
+  matchId: string,
+  playerId: string
+): Promise<boolean> {
+  const { data: innings } = await supabase.from("innings").select("id").eq("match_id", matchId);
+  const innIds = (innings ?? []).map((i) => i.id);
+  if (innIds.length === 0) return false;
+  const { count: dCount } = await supabase
+    .from("deliveries")
+    .select("*", { count: "exact", head: true })
+    .in("innings_id", innIds)
+    .or(
+      `bowler_id.eq.${playerId},striker_id.eq.${playerId},non_striker_id.eq.${playerId},dismissed_player_id.eq.${playerId},fielder_id.eq.${playerId}`
+    );
+  if (dCount && dCount > 0) return true;
+  const { count: eCount } = await supabase
+    .from("batting_events")
+    .select("*", { count: "exact", head: true })
+    .in("innings_id", innIds)
+    .eq("player_id", playerId);
+  return !!(eCount && eCount > 0);
+}
+
+/** Add a player to a team's lineup (allowed any time, incl. mid-match). */
+export async function addMatchPlayer(matchId: string, teamId: string, playerId: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  const { data: match } = await supabase.from("matches").select("*").eq("id", matchId).single();
+  if (!match) return { error: "Match not found." };
+  if (teamId !== match.team_a_id && teamId !== match.team_b_id)
+    return { error: "That team is not in this match." };
+  const { data: existing } = await supabase
+    .from("match_players")
+    .select("team_id")
+    .eq("match_id", matchId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+  if (existing) return { error: "Player is already in this match." };
+
+  const { error } = await supabase
+    .from("match_players")
+    .insert({ match_id: matchId, team_id: teamId, player_id: playerId });
+  if (error) return { error: error.message };
+  revalidatePath(`/admin/matches/${matchId}/score`);
+  revalidatePath(`/admin/matches/${matchId}/lineups`);
+  revalidatePath(`/matches/${matchId}`);
+  return { ok: true };
+}
+
+/** Remove a lineup player — only if they haven't batted / bowled / fielded. */
+export async function removeMatchPlayer(matchId: string, playerId: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  if (await playerParticipated(supabase, matchId, playerId))
+    return { error: "Can't remove — this player has already batted, bowled or fielded." };
+  const { error } = await supabase
+    .from("match_players")
+    .delete()
+    .eq("match_id", matchId)
+    .eq("player_id", playerId);
+  if (error) return { error: error.message };
+  revalidatePath(`/admin/matches/${matchId}/score`);
+  revalidatePath(`/admin/matches/${matchId}/lineups`);
+  revalidatePath(`/matches/${matchId}`);
+  return { ok: true };
 }
 
 /** Record toss and start the match: create innings 1, set status live. */

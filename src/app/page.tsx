@@ -38,7 +38,7 @@ export default async function HomePage() {
   return (
     <PublicShell>
       {/* Hero */}
-      <section className="relative overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-brand-50 via-white to-cream-200 p-7 shadow-card">
+      <section className="relative overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-brand-50 via-cream-100 to-cream-200 p-7 shadow-card">
         <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-brand/20 blur-2xl" />
         <div className="relative">
           <BrandMark size={56} />

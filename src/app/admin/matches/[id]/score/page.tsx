@@ -20,7 +20,12 @@ export default async function ScorePage({ params }: { params: { id: string } }) 
     <AdminShell>
       <div className="mb-4 flex items-center justify-between">
         <Link href="/admin" className="text-sm text-ink-muted hover:text-ink">← Dashboard</Link>
-        <Link href={`/matches/${params.id}`} className="text-sm font-medium text-brand-600">Public view ↗</Link>
+        <div className="flex items-center gap-4">
+          <Link href={`/admin/matches/${params.id}/lineups`} className="text-sm font-medium text-ink-soft hover:text-ink">
+            Edit lineups
+          </Link>
+          <Link href={`/matches/${params.id}`} className="text-sm font-medium text-brand-600">Public view ↗</Link>
+        </div>
       </div>
       {bundle.match.status === "setup" && teamA && teamB ? (
         <TossPanel matchId={params.id} teamA={teamA} teamB={teamB} />
