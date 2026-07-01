@@ -112,19 +112,27 @@ export function NewMatchForm({
     setter(next);
   };
 
-  // Selecting a team pre-fills its lineup from the roster (approved players
-  // only, minus anyone already picked for the other side). Still fully editable.
-  const rosterFor = (teamId: string, otherLineup: Set<string>) =>
-    new Set((rosters[teamId] ?? []).filter((id) => approvedIds.has(id) && !otherLineup.has(id)));
+  const playerById = new Map(players.map((p) => [p.id, p]));
+  const approvedRoster = (teamId: string) =>
+    teamId ? (rosters[teamId] ?? []).filter((id) => approvedIds.has(id)) : [];
 
-  const selectTeamA = (id: string) => {
-    setTeamA(id);
-    setLineupA(id ? rosterFor(id, lineupB) : new Set());
+  // Selecting a team pre-fills both lineups from the two rosters, EXCLUDING any
+  // player who is on both rosters (a duplicate). Those are left unselected on
+  // both sides so the admin explicitly assigns each to one team.
+  const applyTeams = (aId: string, bId: string) => {
+    const ra = approvedRoster(aId);
+    const rb = approvedRoster(bId);
+    const dup = new Set(ra.filter((id) => rb.includes(id)));
+    setLineupA(new Set(ra.filter((id) => !dup.has(id))));
+    setLineupB(new Set(rb.filter((id) => !dup.has(id))));
   };
-  const selectTeamB = (id: string) => {
-    setTeamB(id);
-    setLineupB(id ? rosterFor(id, lineupA) : new Set());
-  };
+  const selectTeamA = (id: string) => { setTeamA(id); applyTeams(id, teamB); };
+  const selectTeamB = (id: string) => { setTeamB(id); applyTeams(teamA, id); };
+
+  // Players on BOTH rosters who are still unassigned to either side.
+  const rosterOverlap =
+    teamA && teamB ? approvedRoster(teamA).filter((id) => approvedRoster(teamB).includes(id)) : [];
+  const unresolvedDups = rosterOverlap.filter((id) => !lineupA.has(id) && !lineupB.has(id));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -146,9 +154,13 @@ export function NewMatchForm({
       block_consecutive_overs: blockConsec,
       super_over_overs: parseInt(superOvers, 10) || 1,
     });
-    setBusy(false);
-    if (res?.error) return setError(res.error);
+    if (res?.error) {
+      setBusy(false);
+      return setError(res.error);
+    }
+    // Keep the "Creating…" label until navigation lands on the toss page.
     if (res?.matchId) router.push(`/admin/matches/${res.matchId}/score`);
+    else setBusy(false);
   }
 
   return (
@@ -178,6 +190,25 @@ export function NewMatchForm({
           <Toggle label="Block consecutive overs" hint="A bowler can't bowl two overs in a row" value={blockConsec} onChange={setBlockConsec} />
         </div>
       </div>
+
+      {unresolvedDups.length > 0 && (
+        <div className="rounded-2xl border border-wicket/50 bg-wicket-soft p-4">
+          <p className="text-sm font-bold text-wicket">
+            ⚠ {unresolvedDups.length} player{unresolvedDups.length === 1 ? " is" : "s are"} on both teams
+          </p>
+          <p className="mt-1 text-xs text-wicket-dark">
+            A player can&apos;t be on both sides of the same match. They&apos;ve been unselected from
+            both lineups — add each one to only the team they&apos;re playing for below.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {unresolvedDups.map((id) => (
+              <span key={id} className="rounded-full bg-wicket/20 px-2.5 py-0.5 text-xs font-medium text-wicket-dark">
+                {playerById.get(id)?.name ?? "Unknown"}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <LineupPicker

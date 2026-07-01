@@ -10,6 +10,7 @@ import { BallChip } from "@/components/match/Chip";
 import {
   recordDelivery,
   undoLast,
+  undoLastBall,
   selectOpeningBatsmen,
   selectNextBatsman,
   retireBatsman,
@@ -38,6 +39,7 @@ type DeliveryPayload = {
   wicket_type?: WicketType | null;
   dismissed_player_id?: string | null;
   fielder_id?: string | null;
+  no_strike_change?: boolean;
 };
 
 export function ScoringConsole({ initial }: { initial: MatchBundle }) {
@@ -46,7 +48,9 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [overrideConsec, setOverrideConsec] = useState(false);
-  const [selectedBowler, setSelectedBowler] = useState<{ over: number; id: string } | null>(null);
+  // Bowler picked for the upcoming over — scoped to a specific innings + over
+  // so a selection never bleeds across innings (each new over/innings re-asks).
+  const [selectedBowler, setSelectedBowler] = useState<{ inningsId: string; over: number; id: string } | null>(null);
 
   const [extra, setExtra] = useState<null | ExtraType>(null);
   const [wicketOpen, setWicketOpen] = useState(false);
@@ -204,8 +208,12 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
           <p className="mt-1 font-display text-lg font-bold text-ink">Target: {target}</p>
         </div>
         <button disabled={busy} onClick={() => act(() => startSecondInnings(matchId))} className="sg-btn-primary w-full py-3.5">
-          Start 2nd innings
+          {busy ? "Starting…" : "Start 2nd innings"}
         </button>
+        <button disabled={busy} onClick={() => act(() => undoLastBall(matchId))} className="sg-btn-ghost w-full py-3">
+          ↩ Undo last ball
+        </button>
+        <p className="text-xs text-ink-muted">Nothing happens until you choose — undo a mistaken last ball, or start the chase.</p>
         <ErrorLine error={error} />
         {renderMatchOptions()}
       </div>
@@ -225,8 +233,12 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
   );
 
   // bowler for the next ball: in-progress over reuses its bowler; fresh over uses the picked one.
+  // The pick must match BOTH this innings and this over, so a new over/innings prompts again.
   const bowlerForBall =
-    s.currentBowlerId ?? (selectedBowler?.over === s.currentOverNumber ? selectedBowler.id : null);
+    s.currentBowlerId ??
+    (selectedBowler?.inningsId === current.innings.id && selectedBowler.over === s.currentOverNumber
+      ? selectedBowler.id
+      : null);
 
   const needOpeners = s.strikerId === null && s.nonStrikerId === null && !s.isInningsOver;
   const needOneBatsman =
@@ -373,7 +385,7 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
           onOverride={() => setOverrideConsec(true)}
           busy={busy}
           onPick={(id) => {
-            setSelectedBowler({ over: s.currentOverNumber, id });
+            setSelectedBowler({ inningsId: current.innings.id, over: s.currentOverNumber, id });
             setOverrideConsec(false);
           }}
         />
@@ -381,6 +393,7 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
         <ScoringPad
           busy={busy}
           onRun={(n) => record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false })}
+          onGully={(n) => record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false, no_strike_change: true })}
           onExtra={setExtra}
           onWicket={() => setWicketOpen(true)}
           onManage={() => setManageOpen(true)}
@@ -543,10 +556,11 @@ function BowlerPicker({
 }
 
 function ScoringPad({
-  busy, onRun, onExtra, onWicket, onManage, onUndo, onAbandon,
+  busy, onRun, onGully, onExtra, onWicket, onManage, onUndo, onAbandon,
 }: {
   busy: boolean;
   onRun: (n: number) => void;
+  onGully: (n: number) => void;
   onExtra: (e: ExtraType) => void;
   onWicket: () => void;
   onManage: () => void;
@@ -569,6 +583,15 @@ function ScoringPad({
           </button>
         ))}
         <button disabled={busy} onClick={onWicket} className="sg-btn-danger h-16 text-lg font-bold">OUT</button>
+      </div>
+      {/* Gully runs: credited to batsman + team, but strike stays put. */}
+      <div className="grid grid-cols-2 gap-2.5">
+        <button disabled={busy} onClick={() => onGully(1)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
+          1G <span className="font-normal text-ink-muted">· keep strike</span>
+        </button>
+        <button disabled={busy} onClick={() => onGully(2)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
+          2G <span className="font-normal text-ink-muted">· keep strike</span>
+        </button>
       </div>
       <div className="grid grid-cols-4 gap-2.5">
         <button disabled={busy} onClick={() => onExtra("wide")} className="sg-btn-ghost h-12 text-sm">Wide</button>
@@ -854,12 +877,16 @@ function maxSeq(b: MatchBundle): number {
 function appendOptimisticDelivery(
   b: MatchBundle,
   payload: DeliveryPayload,
-  selectedBowler: { over: number; id: string } | null
+  selectedBowler: { inningsId: string; over: number; id: string } | null
 ): MatchBundle {
   const ci = buildMatchView(b).currentInnings;
   if (!ci) return b;
   const s = ci.state;
-  const bowler = s.currentBowlerId ?? (selectedBowler?.over === s.currentOverNumber ? selectedBowler.id : null);
+  const bowler =
+    s.currentBowlerId ??
+    (selectedBowler?.inningsId === ci.innings.id && selectedBowler.over === s.currentOverNumber
+      ? selectedBowler.id
+      : null);
   if (!bowler || s.strikerId === null) return b; // let the server place it
   const legal = payload.extra_type === "none" || payload.extra_type === "bye" || payload.extra_type === "leg_bye";
   const seq = maxSeq(b) + 1;
@@ -881,6 +908,7 @@ function appendOptimisticDelivery(
     dismissed_player_id: payload.is_wicket ? payload.dismissed_player_id ?? s.strikerId : null,
     fielder_id: payload.fielder_id ?? null,
     is_free_hit: s.nextIsFreeHit,
+    no_strike_change: payload.no_strike_change ?? false,
     created_at: new Date().toISOString(),
   };
   return { ...b, deliveries: [...b.deliveries, d] };

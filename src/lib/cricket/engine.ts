@@ -184,6 +184,7 @@ function chipFor(d: Delivery): string {
   switch (d.extra_type) {
     case "none": {
       if (d.is_wicket) return bat > 0 ? `${bat}W` : "W";
+      if (d.no_strike_change && bat > 0) return `${bat}G`; // gully run, strike kept
       return String(bat);
     }
     case "wide": {
@@ -442,10 +443,11 @@ export function deriveInnings(input: DeriveInput): InningsState {
 
     if (legal && bowlerRuns(d) === 0) bowler.dots += 1;
 
-    // strike rotation from runs run
+    // strike rotation from runs run — suppressed for gully "1G/2G" deliveries
+    // where the batsman keeps strike regardless of the runs run.
     const lone = nonStriker === null && lastManStands;
     const ran = runsRun(d);
-    if (!lone && nonStriker !== null && ran % 2 === 1) {
+    if (!lone && nonStriker !== null && ran % 2 === 1 && !d.no_strike_change) {
       [striker, nonStriker] = [nonStriker, striker];
     }
 

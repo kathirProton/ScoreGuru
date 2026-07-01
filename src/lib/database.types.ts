@@ -56,6 +56,7 @@ export type Database = {
           is_free_hit: boolean
           is_wicket: boolean
           legal_ball_number: number
+          no_strike_change: boolean
           non_striker_id: string
           over_number: number
           runs_off_bat: number
@@ -76,6 +77,7 @@ export type Database = {
           is_free_hit?: boolean
           is_wicket?: boolean
           legal_ball_number: number
+          no_strike_change?: boolean
           non_striker_id: string
           over_number: number
           runs_off_bat?: number

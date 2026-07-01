@@ -159,8 +159,10 @@ create table if not exists deliveries (
   dismissed_player_id uuid references players(id),
   fielder_id         uuid references players(id),
   is_free_hit        boolean not null default false,
+  no_strike_change   boolean not null default false, -- gully "1G/2G": runs to batsman+team but strike stays
   created_at         timestamptz not null default now()
 );
+alter table deliveries add column if not exists no_strike_change boolean not null default false;
 create index if not exists deliveries_innings_seq_idx on deliveries (innings_id, seq);
 create index if not exists deliveries_innings_idx on deliveries (innings_id);
 create index if not exists deliveries_bowler_idx on deliveries (bowler_id);

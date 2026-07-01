@@ -25,8 +25,11 @@ export function TossPanel({
     setBusy(true);
     setError(null);
     const res = await setTossAndStart(matchId, winner, decision as TossDecision);
-    setBusy(false);
-    if (res?.error) return setError(res.error);
+    if (res?.error) {
+      setBusy(false);
+      return setError(res.error);
+    }
+    // Keep the "Starting…" label until the refresh swaps in the scoring console.
     router.refresh();
   }
 

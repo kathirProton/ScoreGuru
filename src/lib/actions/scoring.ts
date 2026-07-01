@@ -214,6 +214,8 @@ export interface DeliveryInput {
   wicket_type?: WicketType | null;
   dismissed_player_id?: string | null;
   fielder_id?: string | null;
+  /** Gully "1G/2G": credit runs but keep the batsman on strike. */
+  no_strike_change?: boolean;
 }
 
 export async function recordDelivery(
@@ -305,6 +307,7 @@ export async function recordDelivery(
     dismissed_player_id: dismissed,
     fielder_id: input.fielder_id ?? null,
     is_free_hit: isFreeHit,
+    no_strike_change: input.no_strike_change ?? false,
   });
   if (error) return { error: error.message };
 
@@ -343,6 +346,62 @@ export async function undoLast(inningsId: string) {
   }
   await evaluateAndTransition(supabase, ctx.match.id);
   revalidateScoring(ctx.match.id);
+  return { ok: true };
+}
+
+/**
+ * Undo the very last ball of the whole match, wherever it is. Unlike undoLast
+ * (which is scoped to one innings), this also reverts across an innings break:
+ * it deletes the last delivery/event across all innings, drops any now-empty
+ * later innings (e.g. the auto-created 2nd innings), and reopens the match to
+ * live. Used by the innings-break screen's "Undo last ball".
+ */
+export async function undoLastBall(matchId: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  const { data: innings } = await supabase
+    .from("innings")
+    .select("*")
+    .eq("match_id", matchId)
+    .order("innings_number", { ascending: true });
+  if (!innings || innings.length === 0) return { error: "Nothing to undo." };
+  const innIds = innings.map((i) => i.id);
+
+  const { data: deliveries } = await supabase
+    .from("deliveries")
+    .select("id,seq,innings_id")
+    .in("innings_id", innIds);
+  const { data: events } = await supabase
+    .from("batting_events")
+    .select("id,seq,innings_id")
+    .in("innings_id", innIds);
+
+  const all = [
+    ...(deliveries ?? []).map((d) => ({ kind: "d" as const, id: d.id, seq: d.seq, innings_id: d.innings_id })),
+    ...(events ?? []).map((e) => ({ kind: "e" as const, id: e.id, seq: e.seq, innings_id: e.innings_id })),
+  ];
+  if (all.length === 0) return { error: "Nothing to undo." };
+  const last = all.reduce((m, x) => (x.seq > m.seq ? x : m));
+
+  if (last.kind === "d") await supabase.from("deliveries").delete().eq("id", last.id);
+  else await supabase.from("batting_events").delete().eq("id", last.id);
+
+  // Drop any later innings (number > 1) left with no balls/events after the undo
+  // (e.g. the empty 2nd innings created at the break we just reversed).
+  for (const inn of innings) {
+    if (inn.innings_number === 1) continue;
+    const dLeft = (deliveries ?? []).filter((d) => d.innings_id === inn.id && d.id !== last.id).length;
+    const eLeft = (events ?? []).filter((e) => e.innings_id === inn.id && e.id !== last.id).length;
+    if (dLeft === 0 && eLeft === 0) await supabase.from("innings").delete().eq("id", inn.id);
+  }
+
+  await supabase
+    .from("matches")
+    .update({ status: "live", result_text: null, winner_team_id: null, is_tie: false, potm_player_id: null, completed_at: null })
+    .eq("id", matchId);
+  await supabase.from("innings").update({ is_closed: false }).in("id", innIds);
+  await evaluateAndTransition(supabase, matchId);
+  revalidateScoring(matchId);
   return { ok: true };
 }
 
