@@ -11,10 +11,13 @@ interface PlayerInput {
   batting_style?: BattingHand | null;
   bowling_style?: string | null;
   photo_url?: string | null;
+  /** Plain-text self-edit password. Optional on update (blank = keep). */
+  edit_password?: string | null;
 }
 
 const MAX_NAME = 40;
 const MAX_NICK = 24;
+const DEFAULT_PASSWORD = "Test@123";
 
 /** Returns an error string if the (already-trimmed) name is invalid, else null. */
 function nameError(name: string): string | null {
@@ -54,7 +57,7 @@ export async function submitPlayer(input: PlayerInput) {
 
   const { error } = await supabase
     .from("players")
-    .insert({ ...data, status: "pending" });
+    .insert({ ...data, edit_password: input.edit_password?.trim() || DEFAULT_PASSWORD, status: "pending" });
   if (error) return { error: error.message };
   revalidatePath("/admin/players");
   return { ok: true };
@@ -76,7 +79,7 @@ export async function createPlayer(input: PlayerInput) {
   if (existing) return { error: "A player with this name already exists." };
   const { error } = await supabase
     .from("players")
-    .insert({ ...data, status: "approved" });
+    .insert({ ...data, edit_password: input.edit_password?.trim() || DEFAULT_PASSWORD, status: "approved" });
   if (error) return { error: error.message };
   revalidatePath("/admin/players");
   revalidatePath("/players");
@@ -98,10 +101,61 @@ export async function updatePlayer(id: string, input: PlayerInput) {
     .neq("id", id)
     .maybeSingle();
   if (clash) return { error: "A player with this name already exists." };
-  const { error } = await supabase.from("players").update(data).eq("id", id);
+  const pw = input.edit_password?.trim();
+  const patch = { ...data, ...(pw ? { edit_password: pw } : {}) }; // blank = keep existing
+  const { error } = await supabase.from("players").update(patch).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/admin/players");
   revalidatePath(`/players/${id}`);
+  return { ok: true };
+}
+
+/** Public: check a player's self-edit password. Returns only a boolean. */
+export async function checkPlayerPassword(id: string, password: string) {
+  const supabase = createServiceClient();
+  const { data: player } = await supabase
+    .from("players")
+    .select("edit_password")
+    .eq("id", id)
+    .maybeSingle();
+  if (!player) return { ok: false };
+  return { ok: (password ?? "").trim() === (player.edit_password ?? "") };
+}
+
+/**
+ * Public self-service edit, gated by the player's password. Updates their own
+ * details (and optionally a new password). Never changes approval status.
+ */
+export async function updatePlayerSelf(id: string, password: string, input: PlayerInput) {
+  const supabase = createServiceClient();
+  const { data: player } = await supabase
+    .from("players")
+    .select("edit_password")
+    .eq("id", id)
+    .maybeSingle();
+  if (!player) return { error: "Player not found." };
+  if ((password ?? "").trim() !== (player.edit_password ?? ""))
+    return { error: "Incorrect password." };
+
+  const data = clean(input);
+  const err = nameError(data.name);
+  if (err) return { error: err };
+  const { data: clash } = await supabase
+    .from("players")
+    .select("id")
+    .ilike("name", data.name)
+    .neq("status", "rejected")
+    .neq("id", id)
+    .maybeSingle();
+  if (clash) return { error: "A player with this name already exists." };
+
+  const newPw = input.edit_password?.trim();
+  const patch = { ...data, ...(newPw ? { edit_password: newPw } : {}) };
+  const { error } = await supabase.from("players").update(patch).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath(`/players/${id}`);
+  revalidatePath("/players");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 

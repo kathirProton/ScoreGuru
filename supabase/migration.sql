@@ -54,9 +54,11 @@ create table if not exists players (
   batting_style batting_hand,
   bowling_style text,                       -- e.g. "right-arm pace", "left-arm spin"
   photo_url     text,
+  edit_password text not null default 'Test@123', -- plain-text self-edit password (low-security by design)
   status        player_status not null default 'pending',
   created_at    timestamptz not null default now()
 );
+alter table players add column if not exists edit_password text not null default 'Test@123';
 -- Name is the identity: unique among everyone NOT rejected (rejected names freed up).
 create unique index if not exists players_name_active_uidx
   on players (lower(name)) where status <> 'rejected';

@@ -62,7 +62,9 @@ export async function fetchMatchBundle(
   return {
     match,
     teams: teams ?? [],
-    players: players ?? [],
+    // Never ship players' self-edit passwords to the browser (this bundle is
+    // fetched with the anon key and passed into client components).
+    players: (players ?? []).map((p) => ({ ...p, edit_password: "" })),
     matchPlayers: matchPlayers ?? [],
     innings: innings ?? [],
     deliveries: deliveries ?? [],

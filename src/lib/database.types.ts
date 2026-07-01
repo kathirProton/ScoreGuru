@@ -183,6 +183,7 @@ export type Database = {
           batting_style: Database["public"]["Enums"]["batting_hand"] | null
           bowling_style: string | null
           created_at: string
+          edit_password: string
           id: string
           jersey_number: number | null
           name: string
@@ -194,6 +195,7 @@ export type Database = {
           batting_style?: Database["public"]["Enums"]["batting_hand"] | null
           bowling_style?: string | null
           created_at?: string
+          edit_password?: string
           id?: string
           jersey_number?: number | null
           name: string
