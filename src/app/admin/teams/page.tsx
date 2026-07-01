@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function AdminTeamsPage() {
   await ensureAdmin();
   const [teams, players, rosters] = await Promise.all([
-    getTeams(),
+    getTeams(true),
     getPlayers(["approved"]),
     getRosterMap(),
   ]);

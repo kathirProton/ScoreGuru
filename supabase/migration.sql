@@ -68,8 +68,10 @@ create table if not exists teams (
   name       text not null,
   logo_url   text,
   color      text default '#59C749',
+  hidden     boolean not null default false,   -- archived teams (had match history) stay for scorecards but leave pickers
   created_at timestamptz not null default now()
 );
+alter table teams add column if not exists hidden boolean not null default false;
 
 -- ───────────── TEAM ROSTERS ─────────────
 -- Persistent team ↔ player membership. A player can belong to many teams;

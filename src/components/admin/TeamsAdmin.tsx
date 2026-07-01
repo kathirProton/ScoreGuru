@@ -5,7 +5,7 @@ import { Avatar } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
 import { compressImage } from "@/lib/image";
 import { uploadImage } from "@/lib/actions/upload";
-import { createTeam, updateTeam, deleteTeam, setTeamRoster } from "@/lib/actions/teams";
+import { createTeam, updateTeam, deleteTeam, restoreTeam, setTeamRoster } from "@/lib/actions/teams";
 import type { Team, Player } from "@/lib/types";
 
 const COLORS = ["#2BEE34", "#59C749", "#1E7FD6", "#E23D33", "#D9A300", "#7C3AED", "#E07A1F", "#0EA5A4"];
@@ -160,6 +160,17 @@ export function TeamsAdmin({
     startTransition(async () => {
       const res = await deleteTeam(id);
       if (res?.error) setError(res.error);
+      else if (res && "archived" in res && res.archived)
+        setError("Team has match history — archived instead of deleted (still on old scorecards).");
+      else setError(null);
+      router.refresh();
+    });
+  }
+
+  function restore(id: string) {
+    startTransition(async () => {
+      const res = await restoreTeam(id);
+      if (res?.error) setError(res.error);
       router.refresh();
     });
   }
@@ -181,14 +192,23 @@ export function TeamsAdmin({
           {teams.map((t) => {
             const roster = (rosters[t.id] ?? []).map((id) => playerById.get(id)).filter(Boolean) as Player[];
             return (
-              <div key={t.id} className="sg-card p-4">
+              <div key={t.id} className={`sg-card p-4 ${t.hidden ? "opacity-60" : ""}`}>
                 <div className="flex items-center gap-3">
                   <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: t.color ?? "#2BEE34" }} />
                   <Avatar name={t.name} photo={t.logo_url} size={44} />
-                  <span className="min-w-0 flex-1 truncate font-semibold text-ink">{t.name}</span>
+                  <span className="min-w-0 flex-1 truncate font-semibold text-ink">
+                    {t.name}
+                    {t.hidden && <span className="ml-2 rounded-full bg-cream-200 px-2 py-0.5 text-[10px] font-semibold uppercase text-ink-muted">Archived</span>}
+                  </span>
                   <div className="flex shrink-0 gap-1.5">
-                    <button onClick={() => setEditing(t)} className="sg-btn-ghost px-2.5 py-1.5 text-xs">Edit</button>
-                    <button disabled={pending} onClick={() => remove(t.id)} className="sg-btn-ghost px-2.5 py-1.5 text-xs text-wicket">Delete</button>
+                    {t.hidden ? (
+                      <button disabled={pending} onClick={() => restore(t.id)} className="sg-btn-ghost px-2.5 py-1.5 text-xs text-brand-600">Restore</button>
+                    ) : (
+                      <>
+                        <button onClick={() => setEditing(t)} className="sg-btn-ghost px-2.5 py-1.5 text-xs">Edit</button>
+                        <button disabled={pending} onClick={() => remove(t.id)} className="sg-btn-ghost px-2.5 py-1.5 text-xs text-wicket">Delete</button>
+                      </>
+                    )}
                   </div>
                 </div>
                 <p className="mt-3 text-xs font-medium text-ink-muted">

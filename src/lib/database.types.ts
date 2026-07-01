@@ -208,6 +208,7 @@ export type Database = {
         Row: {
           color: string | null
           created_at: string
+          hidden: boolean
           id: string
           logo_url: string | null
           name: string
@@ -215,6 +216,7 @@ export type Database = {
         Insert: {
           color?: string | null
           created_at?: string
+          hidden?: boolean
           id?: string
           logo_url?: string | null
           name: string

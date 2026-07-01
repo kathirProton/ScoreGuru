@@ -44,9 +44,11 @@ export async function getTeamsMap() {
   return new Map((data ?? []).map((t) => [t.id, t]));
 }
 
-export async function getTeams(): Promise<Team[]> {
+export async function getTeams(includeHidden = false): Promise<Team[]> {
   const supabase = createReadClient();
-  const { data } = await supabase.from("teams").select("*").order("name");
+  let q = supabase.from("teams").select("*").order("name");
+  if (!includeHidden) q = q.eq("hidden", false);
+  const { data } = await q;
   return data ?? [];
 }
 

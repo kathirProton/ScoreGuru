@@ -73,17 +73,42 @@ export async function updateTeam(id: string, input: TeamInput) {
   return { ok: true };
 }
 
+/**
+ * Delete a team. A team that has appeared in a match is ARCHIVED (hidden) so
+ * historical scorecards keep resolving its name; a team that never played is
+ * hard-deleted (its roster rows cascade away).
+ */
 export async function deleteTeam(id: string) {
   await requireAdmin();
   const supabase = createServiceClient();
-  const { count } = await supabase
-    .from("match_players")
-    .select("*", { count: "exact", head: true })
-    .eq("team_id", id);
-  if (count && count > 0) {
-    return { error: "Team has match history and cannot be deleted." };
+  const [{ count: mpCount }, { count: matchCount }] = await Promise.all([
+    supabase.from("match_players").select("*", { count: "exact", head: true }).eq("team_id", id),
+    supabase
+      .from("matches")
+      .select("*", { count: "exact", head: true })
+      .or(`team_a_id.eq.${id},team_b_id.eq.${id}`),
+  ]);
+  const hasHistory = (mpCount ?? 0) > 0 || (matchCount ?? 0) > 0;
+
+  if (hasHistory) {
+    const { error } = await supabase.from("teams").update({ hidden: true }).eq("id", id);
+    if (error) return { error: error.message };
+    revalidatePath("/admin/teams");
+    revalidatePath("/teams");
+    return { ok: true, archived: true };
   }
   const { error } = await supabase.from("teams").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/admin/teams");
+  revalidatePath("/teams");
+  return { ok: true, archived: false };
+}
+
+/** Restore an archived (hidden) team back into the pickers. */
+export async function restoreTeam(id: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("teams").update({ hidden: false }).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/admin/teams");
   revalidatePath("/teams");
