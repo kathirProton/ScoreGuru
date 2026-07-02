@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PublicShell } from "@/components/public/PublicShell";
-import { Avatar, Pill, SectionTitle, EmptyState } from "@/components/ui/primitives";
+import { Pill, SectionTitle, EmptyState } from "@/components/ui/primitives";
 import { getPlayer, getStatsBundle, getMatchView } from "@/lib/data";
 import {
   aggregatePlayers,
@@ -12,9 +12,13 @@ import {
   matchesPlayed,
   winPct,
 } from "@/lib/cricket/stats";
-import { fmt1, fmt2 } from "@/lib/format";
+import { fmt1, fmt2, roleLabel } from "@/lib/format";
 import { MatchCard } from "@/components/public/MatchCard";
 import { PlayerSelfEdit } from "@/components/public/PlayerSelfEdit";
+import { PlayerPhoto } from "@/components/public/PlayerPhoto";
+
+const battingLabel = (s: string | null) =>
+  s === "right" ? "Right-hand bat" : s === "left" ? "Left-hand bat" : null;
 
 export const dynamic = "force-dynamic";
 
@@ -44,14 +48,15 @@ export default async function PlayerProfile({ params }: { params: { id: string }
   return (
     <PublicShell>
       <div className="sg-card flex items-center gap-4 p-5">
-        <Avatar name={player.name} photo={player.photo_url} size={76} ring />
+        <PlayerPhoto name={player.name} photo={player.photo_url} size={76} />
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-2xl font-bold tracking-tight text-ink">{player.name}</h1>
           {player.nickname && <p className="text-ink-soft">“{player.nickname}”</p>}
           <div className="mt-2 flex flex-wrap gap-2">
             {player.jersey_number != null && <Pill tone="brand">#{player.jersey_number}</Pill>}
-            {player.batting_style && <Pill>{player.batting_style === "right" ? "RHB" : "LHB"}</Pill>}
-            {player.bowling_style && <Pill>{player.bowling_style}</Pill>}
+            <Pill tone="brand">{roleLabel(player.role)}</Pill>
+            <Pill>{battingLabel(player.batting_style) ?? "Bat: —"}</Pill>
+            <Pill>{player.bowling_style ? `Bowls ${player.bowling_style}` : "Bowls: —"}</Pill>
           </div>
         </div>
         {/* Password is blanked so it never reaches the browser; the gate re-checks server-side. */}

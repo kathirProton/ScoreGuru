@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/primitives";
+import { Select } from "@/components/ui/Select";
 import { createMatch } from "@/lib/actions/matches";
 import type { Team, Player } from "@/lib/types";
 
@@ -45,14 +46,14 @@ function LineupPicker({
   return (
     <div className="sg-card p-4">
       <label className="sg-label">{label}</label>
-      <select className="sg-input mb-3" value={team} onChange={(e) => onTeam(e.target.value)}>
-        <option value="">Select team…</option>
-        {teams.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-      </select>
+      <div className="mb-3">
+        <Select
+          value={team}
+          onChange={onTeam}
+          placeholder="Select team…"
+          options={teams.map((t) => ({ value: t.id, label: t.name }))}
+        />
+      </div>
       <p className="mb-2 text-xs font-medium text-ink-muted">
         Lineup · {selected.size} selected
       </p>
@@ -97,7 +98,6 @@ export function NewMatchForm({
   const [venue, setVenue] = useState("");
   const [freeHit, setFreeHit] = useState(true);
   const [lastMan, setLastMan] = useState(true);
-  const [blockConsec, setBlockConsec] = useState(true);
   const [superOvers, setSuperOvers] = useState("1");
   const [teamA, setTeamA] = useState("");
   const [teamB, setTeamB] = useState("");
@@ -151,7 +151,7 @@ export function NewMatchForm({
       lineup_b: [...lineupB],
       free_hit_enabled: freeHit,
       last_man_stands: lastMan,
-      block_consecutive_overs: blockConsec,
+      block_consecutive_overs: true,
       super_over_overs: parseInt(superOvers, 10) || 1,
     });
     if (res?.error) {
@@ -187,7 +187,6 @@ export function NewMatchForm({
         <div className="grid gap-2.5">
           <Toggle label="Free hit" hint="Next legal ball after a no-ball is a free hit" value={freeHit} onChange={setFreeHit} />
           <Toggle label="Last man stands" hint="Last batsman can bat alone" value={lastMan} onChange={setLastMan} />
-          <Toggle label="Block consecutive overs" hint="A bowler can't bowl two overs in a row" value={blockConsec} onChange={setBlockConsec} />
         </div>
       </div>
 

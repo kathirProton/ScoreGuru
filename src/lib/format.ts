@@ -51,6 +51,20 @@ export function fmt2(n: number): string {
   return Number.isFinite(n) ? n.toFixed(2) : "—";
 }
 
+/** Player designation label. Null / unknown → All-rounder. */
+export function roleLabel(role: string | null | undefined): string {
+  switch (role) {
+    case "batsman":
+      return "Batsman";
+    case "bowler":
+      return "Bowler";
+    case "keeper":
+      return "Wicket-keeper";
+    default:
+      return "All-rounder";
+  }
+}
+
 export function initials(name: string): string {
   return name
     .split(" ")

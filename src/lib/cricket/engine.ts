@@ -102,6 +102,8 @@ export interface InningsState {
   nonStrikerId: string | null;
   currentBowlerId: string | null;
   lastBowlerId: string | null; // for consecutive-over rule
+  /** All distinct bowlers of the previous over — none may bowl the next over. */
+  lastOverBowlerIds: string[];
   nextIsFreeHit: boolean;
   batsmen: BatsmanStat[];
   bowlers: BowlerStat[];
@@ -556,6 +558,13 @@ export function deriveInnings(input: DeriveInput): InningsState {
   const ballsThisOver = legalBalls % 6;
   const currentOverNumber = Math.floor(legalBalls / 6);
   const thisOver = overMap.get(currentOverNumber)?.deliveries ?? [];
+  // Every bowler who sent down a ball in the previous over (handles mid-over
+  // bowler changes) — used to bar them all from bowling the next over.
+  const prevOverNumber = currentOverNumber - 1;
+  const lastOverBowlerIds =
+    prevOverNumber >= 0
+      ? [...new Set(deliveries.filter((d) => d.over_number === prevOverNumber).map((d) => d.bowler_id))]
+      : [];
 
   return {
     totalRuns,
@@ -569,6 +578,7 @@ export function deriveInnings(input: DeriveInput): InningsState {
     nonStrikerId: nonStriker,
     currentBowlerId,
     lastBowlerId,
+    lastOverBowlerIds,
     nextIsFreeHit: freeHitArmed,
     batsmen: [...bats.values()].sort((a, b) => a.battingPosition - b.battingPosition),
     bowlers: [...bowlers.values()],

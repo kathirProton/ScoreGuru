@@ -11,6 +11,9 @@ import {
   playerEconomy,
   bestFigures,
   matchesPlayed,
+  worstPerformerCounts,
+  dismissalHeadToHead,
+  boundaryHeadToHead,
 } from "@/lib/cricket/stats";
 import { fmt1, fmt2, monthKey, monthLabel } from "@/lib/format";
 
@@ -45,7 +48,22 @@ export default async function StatsPage({
   const filteredMatches = selected
     ? bundle.matches.filter((m) => monthKey(m.match_date) === selected)
     : bundle.matches;
-  const aggs = aggregatePlayers({ ...bundle, matches: filteredMatches });
+  const scopedInput = { ...bundle, matches: filteredMatches };
+  const aggs = aggregatePlayers(scopedInput);
+  const sodhappalRows = [...worstPerformerCounts(scopedInput).entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([playerId, count]) => ({ playerId, value: `${count}` }));
+  const h2h = dismissalHeadToHead(scopedInput);
+  const boundaryPairs = boundaryHeadToHead(scopedInput);
+  const topSixes = boundaryPairs.filter((p) => p.sixes > 0).sort((a, b) => b.sixes - a.sixes).slice(0, 6);
+  const topFours = boundaryPairs.filter((p) => p.fours > 0).sort((a, b) => b.fours - a.fours).slice(0, 6);
+  const topBoundaries = boundaryPairs
+    .map((p) => ({ ...p, total: p.sixes + p.fours }))
+    .filter((p) => p.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 6);
+  const hasRivalries = h2h.length > 0 || boundaryPairs.length > 0;
 
   const hasData = filteredMatches.length > 0 && aggs.size > 0;
 
@@ -188,9 +206,113 @@ export default async function StatsPage({
             accent="text-wicket"
             rows={board(aggs, (a) => a.ducks, (a) => `${a.ducks}`)}
           />
+          <Leaderboard
+            title="Most Aatta Naayakan"
+            emoji="🏆"
+            players={players}
+            accent="text-gold-dark"
+            rows={board(aggs, (a) => a.potmAwards, (a) => `${a.potmAwards}`, { sub: () => "player of the match" })}
+          />
+          <Leaderboard
+            title="Most Hat-tricks"
+            emoji="🎩"
+            players={players}
+            rows={board(aggs, (a) => a.hatTricks, (a) => `${a.hatTricks}`)}
+          />
+          <Leaderboard
+            title="Most Sodhappals"
+            emoji="😵"
+            players={players}
+            accent="text-wicket"
+            rows={sodhappalRows}
+          />
+          <Leaderboard
+            title="Most Catches Dropped"
+            emoji="🧤"
+            players={players}
+            accent="text-wicket"
+            rows={board(aggs, (a) => a.catchesDropped, (a) => `${a.catchesDropped}`)}
+          />
         </div>
       )}
+
+      {hasData && hasRivalries && (
+        <section className="mt-8">
+          <h2 className="mb-3 font-display text-lg font-bold text-ink">Rivalries 🎯</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <RivalryList
+              title="Bunnies — most dismissed"
+              rows={h2h.map((r) => ({
+                key: `${r.bowlerId}-${r.batsmanId}`,
+                a: players.get(r.bowlerId)?.name ?? "?",
+                b: players.get(r.batsmanId)?.name ?? "?",
+                verb: "dismissed",
+                value: `${r.count}×`,
+                tone: "text-wicket",
+              }))}
+            />
+            <RivalryList
+              title="Most sixes off a bowler"
+              rows={topSixes.map((r) => ({
+                key: `s-${r.batsmanId}-${r.bowlerId}`,
+                a: players.get(r.batsmanId)?.name ?? "?",
+                b: players.get(r.bowlerId)?.name ?? "?",
+                verb: "off",
+                value: `${r.sixes} six${r.sixes === 1 ? "" : "es"}`,
+                tone: "text-brand-600",
+              }))}
+            />
+            <RivalryList
+              title="Most fours off a bowler"
+              rows={topFours.map((r) => ({
+                key: `f-${r.batsmanId}-${r.bowlerId}`,
+                a: players.get(r.batsmanId)?.name ?? "?",
+                b: players.get(r.bowlerId)?.name ?? "?",
+                verb: "off",
+                value: `${r.fours} four${r.fours === 1 ? "" : "s"}`,
+                tone: "text-boundary",
+              }))}
+            />
+            <RivalryList
+              title="Most boundaries off a bowler"
+              rows={topBoundaries.map((r) => ({
+                key: `b-${r.batsmanId}-${r.bowlerId}`,
+                a: players.get(r.batsmanId)?.name ?? "?",
+                b: players.get(r.bowlerId)?.name ?? "?",
+                verb: "off",
+                value: `${r.total} boundar${r.total === 1 ? "y" : "ies"}`,
+                tone: "text-ink",
+              }))}
+            />
+          </div>
+        </section>
+      )}
     </PublicShell>
+  );
+}
+
+function RivalryList({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: { key: string; a: string; b: string; verb: string; value: string; tone: string }[];
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="sg-card p-3">
+      <p className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-ink-faint">{title}</p>
+      <div className="divide-y divide-line">
+        {rows.map((r) => (
+          <div key={r.key} className="flex items-center justify-between gap-2 px-1 py-2.5 text-sm">
+            <span className="min-w-0 truncate text-ink">
+              <b>{r.a}</b> {r.verb} <b>{r.b}</b>
+            </span>
+            <span className={`shrink-0 font-mono text-xs font-bold ${r.tone}`}>{r.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

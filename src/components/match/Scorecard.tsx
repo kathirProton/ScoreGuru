@@ -42,6 +42,14 @@ function InningsTable({ view, iv }: { view: MatchView; iv: InningsView }) {
     (b) => b.balls > 0 || b.isOut || b.status === "not_out" || b.status === "retired_not_out"
   );
 
+  // Full batting squad, so we can show who is yet to bat.
+  const battedIds = new Set(batted.map((b) => b.playerId));
+  const atCrease = new Set([state.strikerId, state.nonStrikerId].filter(Boolean) as string[]);
+  const yetToBat = view.matchPlayers
+    .filter((mp) => mp.team_id === iv.innings.batting_team_id)
+    .map((mp) => view.playerById.get(mp.player_id))
+    .filter((p): p is NonNullable<typeof p> => !!p && !battedIds.has(p.id) && !atCrease.has(p.id));
+
   return (
     <div className="sg-card overflow-hidden">
       <div className="flex items-center justify-between bg-brand-50 px-4 py-3">
@@ -99,6 +107,19 @@ function InningsTable({ view, iv }: { view: MatchView; iv: InningsView }) {
           Total {state.totalRuns}/{state.wickets}
         </span>
       </div>
+
+      {/* Yet to bat */}
+      {yetToBat.length > 0 && (
+        <div className="border-t border-line px-4 py-2.5 text-xs text-ink-muted">
+          <span className="font-medium text-ink-soft">Yet to bat: </span>
+          {yetToBat.map((p, i) => (
+            <span key={p.id}>
+              {p.nickname || p.name}
+              {i < yetToBat.length - 1 ? ", " : ""}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Fall of wickets */}
       {state.fallOfWickets.length > 0 && (

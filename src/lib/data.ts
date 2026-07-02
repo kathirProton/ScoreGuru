@@ -91,7 +91,7 @@ export async function getStatsBundle() {
     .eq("status", "completed");
   const matchIds = (matches ?? []).map((m) => m.id);
   if (matchIds.length === 0) {
-    return { matches: [], innings: [], deliveries: [], events: [], matchPlayers: [], players: [] };
+    return { matches: [], innings: [], deliveries: [], events: [], matchPlayers: [], players: [], droppedCatches: [] };
   }
   const { data: innings } = await supabase
     .from("innings")
@@ -109,6 +109,10 @@ export async function getStatsBundle() {
     .select("*")
     .in("match_id", matchIds);
   const { data: players } = await supabase.from("players").select("*");
+  const { data: droppedCatches } = await supabase
+    .from("dropped_catches")
+    .select("*")
+    .in("match_id", matchIds);
   return {
     matches: matches ?? [],
     innings: innings ?? [],
@@ -116,5 +120,6 @@ export async function getStatsBundle() {
     events: events ?? [],
     matchPlayers: matchPlayers ?? [],
     players: players ?? [],
+    droppedCatches: droppedCatches ?? [],
   };
 }

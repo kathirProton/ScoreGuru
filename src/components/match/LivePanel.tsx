@@ -16,7 +16,7 @@ export function LivePanel({ view }: { view: MatchView }) {
   const bowler = s.bowlers.find((b) => b.playerId === s.currentBowlerId);
 
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-brand-50 via-cream-100 to-cream-200 p-5 shadow-card">
+    <div className="relative overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-brand-500/15 via-cream-100 to-cream-200 p-5 shadow-card">
       <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-brand/15 blur-2xl" />
 
       <div className="relative">

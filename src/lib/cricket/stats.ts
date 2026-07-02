@@ -31,6 +31,11 @@ export interface PlayerAgg {
   catches: number;
   stumpings: number;
   runOuts: number;
+  catchesDropped: number;
+  // achievements
+  potmAwards: number;
+  hatTricks: number;
+  sodhappals: number;
   // results
   wins: number;
   losses: number;
@@ -60,6 +65,10 @@ function blank(playerId: string): PlayerAgg {
     catches: 0,
     stumpings: 0,
     runOuts: 0,
+    catchesDropped: 0,
+    potmAwards: 0,
+    hatTricks: 0,
+    sodhappals: 0,
     wins: 0,
     losses: 0,
     ties: 0,
@@ -72,6 +81,7 @@ export interface AggregateInput {
   deliveries: Delivery[];
   events: BattingEvent[];
   matchPlayers: { match_id: string; team_id: string; player_id: string }[];
+  droppedCatches?: { match_id: string; innings_id: string; fielder_id: string }[];
 }
 
 /** Build per-player aggregated stats across all COMPLETED, non-super-over innings. */
@@ -172,9 +182,102 @@ export function aggregatePlayers(input: AggregateInput): Map<string, PlayerAgg> 
       if (d.wicket_type === "stumped" && d.fielder_id) get(d.fielder_id).stumpings += 1;
       if (d.wicket_type === "run_out" && d.fielder_id) get(d.fielder_id).runOuts += 1;
     }
+
+    // hat-tricks: 3 consecutive wicket-deliveries by the same bowler
+    const byBowler = new Map<string, Delivery[]>();
+    for (const d of [...innDeliveries].sort((a, b) => a.seq - b.seq)) {
+      const list = byBowler.get(d.bowler_id) ?? [];
+      list.push(d);
+      byBowler.set(d.bowler_id, list);
+    }
+    for (const [bid, ds] of byBowler) {
+      let streak = 0;
+      for (const d of ds) {
+        const bowlerWicket = d.is_wicket && !!d.wicket_type && BOWLER_WICKETS.includes(d.wicket_type);
+        if (bowlerWicket) {
+          streak += 1;
+          if (streak === 3) {
+            get(bid).hatTricks += 1;
+            streak = 0;
+          }
+        } else {
+          streak = 0;
+        }
+      }
+    }
+  }
+
+  // Player of the match awards (one per completed match)
+  for (const m of completed) {
+    if (m.potm_player_id) get(m.potm_player_id).potmAwards += 1;
+  }
+  // Dropped catches (completed matches only)
+  for (const dc of input.droppedCatches ?? []) {
+    if (matchById.has(dc.match_id)) get(dc.fielder_id).catchesDropped += 1;
   }
 
   return aggs;
+}
+
+/** How many matches each player was the worst performer ("Sodhappal") in. */
+export function worstPerformerCounts(input: AggregateInput): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const m of input.matches.filter((x) => x.status === "completed")) {
+    const worst = computeWorstPerformer(input, m.id, m.potm_player_id);
+    if (worst) counts.set(worst, (counts.get(worst) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Top bowler→batsman dismissal pairs ("A dismissed B N times"). */
+export function dismissalHeadToHead(
+  input: AggregateInput,
+  topN = 8
+): { bowlerId: string; batsmanId: string; count: number }[] {
+  const completed = new Set(input.matches.filter((m) => m.status === "completed").map((m) => m.id));
+  const innById = new Map(input.innings.map((i) => [i.id, i]));
+  const pairs = new Map<string, number>();
+  for (const d of input.deliveries) {
+    const inn = innById.get(d.innings_id);
+    if (!inn || inn.is_super_over || !completed.has(inn.match_id)) continue;
+    if (d.is_wicket && d.dismissed_player_id && d.wicket_type && BOWLER_WICKETS.includes(d.wicket_type)) {
+      const key = `${d.bowler_id}|${d.dismissed_player_id}`;
+      pairs.set(key, (pairs.get(key) ?? 0) + 1);
+    }
+  }
+  return [...pairs.entries()]
+    .map(([k, count]) => {
+      const [bowlerId, batsmanId] = k.split("|");
+      return { bowlerId, batsmanId, count };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, topN);
+}
+
+/** All batsman→bowler boundary pairs ("A hit B for N sixes / fours"). */
+export function boundaryHeadToHead(
+  input: AggregateInput
+): { batsmanId: string; bowlerId: string; sixes: number; fours: number }[] {
+  const completed = new Set(input.matches.filter((m) => m.status === "completed").map((m) => m.id));
+  const innById = new Map(input.innings.map((i) => [i.id, i]));
+  const pairs = new Map<string, { sixes: number; fours: number }>();
+  for (const d of input.deliveries) {
+    const inn = innById.get(d.innings_id);
+    if (!inn || inn.is_super_over || !completed.has(inn.match_id)) continue;
+    if (d.extra_type === "wide") continue; // no runs off the bat on a wide
+    const isSix = d.runs_off_bat === 6;
+    const isFour = d.runs_off_bat === 4;
+    if (!isSix && !isFour) continue;
+    const key = `${d.striker_id}|${d.bowler_id}`;
+    const e = pairs.get(key) ?? { sixes: 0, fours: 0 };
+    if (isSix) e.sixes += 1;
+    else e.fours += 1;
+    pairs.set(key, e);
+  }
+  return [...pairs.entries()].map(([k, v]) => {
+    const [batsmanId, bowlerId] = k.split("|");
+    return { batsmanId, bowlerId, ...v };
+  });
 }
 
 export const battingAverage = (a: PlayerAgg) =>
@@ -194,40 +297,63 @@ export const bestFigures = (a: PlayerAgg) =>
  * points = runs + wk*20 + catch*10 + stump*10 + runout*8 + six*2 + four*1
  *          + low-economy bonus (bowled ≥1 over) + high-SR bonus (faced ≥5 balls)
  */
-export function computePOTM(input: AggregateInput, matchId: string): string | null {
+/** Single-match impact score used for POTM (best) and worst performer. */
+export function playerImpactPoints(a: PlayerAgg): number {
+  let pts =
+    a.runs + a.wickets * 20 + a.catches * 10 + a.stumpings * 10 + a.runOuts * 8 + a.sixes * 2 + a.fours * 1;
+  if (a.ballsBowled >= 6) {
+    const econ = playerEconomy(a);
+    if (econ < 6) pts += (6 - econ) * 2; // low-economy bonus
+  }
+  if (a.balls >= 5) {
+    const sr = playerStrikeRate(a);
+    if (sr > 120) pts += (sr - 120) / 20; // high strike-rate bonus
+  }
+  return pts;
+}
+
+function singleMatchAggs(input: AggregateInput, matchId: string): Map<string, PlayerAgg> | null {
   const match = input.matches.find((m) => m.id === matchId);
   if (!match) return null;
-  const single: AggregateInput = {
+  return aggregatePlayers({
     matches: [match],
     innings: input.innings.filter((i) => i.match_id === matchId),
     deliveries: input.deliveries,
     events: input.events,
     matchPlayers: input.matchPlayers.filter((mp) => mp.match_id === matchId),
-  };
-  const aggs = aggregatePlayers(single);
+  });
+}
+
+export function computePOTM(input: AggregateInput, matchId: string): string | null {
+  const aggs = singleMatchAggs(input, matchId);
+  if (!aggs) return null;
   let bestId: string | null = null;
   let bestPts = -Infinity;
   for (const a of aggs.values()) {
-    let pts =
-      a.runs +
-      a.wickets * 20 +
-      a.catches * 10 +
-      a.stumpings * 10 +
-      a.runOuts * 8 +
-      a.sixes * 2 +
-      a.fours * 1;
-    if (a.ballsBowled >= 6) {
-      const econ = playerEconomy(a);
-      if (econ < 6) pts += (6 - econ) * 2; // low-economy bonus
-    }
-    if (a.balls >= 5) {
-      const sr = playerStrikeRate(a);
-      if (sr > 120) pts += (sr - 120) / 20; // high strike-rate bonus
-    }
+    const pts = playerImpactPoints(a);
     if (pts > bestPts) {
       bestPts = pts;
       bestId = a.playerId;
     }
   }
   return bestId;
+}
+
+/**
+ * Worst performer of the match ("Sodhappal Sundaram") — lowest impact among
+ * players who actually batted or bowled. Excludes `excludeId` (the POTM) when
+ * other participants exist, so the same player isn't both.
+ */
+export function computeWorstPerformer(
+  input: AggregateInput,
+  matchId: string,
+  excludeId?: string | null
+): string | null {
+  const aggs = singleMatchAggs(input, matchId);
+  if (!aggs) return null;
+  const participants = [...aggs.values()]
+    .filter((a) => a.balls > 0 || a.ballsBowled > 0)
+    .sort((x, y) => playerImpactPoints(x) - playerImpactPoints(y));
+  for (const a of participants) if (a.playerId !== excludeId) return a.playerId;
+  return null;
 }

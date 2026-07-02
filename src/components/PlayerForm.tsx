@@ -6,7 +6,16 @@ import { uploadPublicPlayerPhoto, uploadImage } from "@/lib/actions/upload";
 import { submitPlayer, createPlayer, updatePlayer, updatePlayerSelf } from "@/lib/actions/players";
 import { Avatar } from "@/components/ui/primitives";
 import { Toast } from "@/components/ui/Toast";
+import { Select } from "@/components/ui/Select";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import type { Player } from "@/lib/types";
+
+const ROLE_OPTIONS = [
+  { value: "all_rounder", label: "All-rounder" },
+  { value: "batsman", label: "Batsman" },
+  { value: "bowler", label: "Bowler" },
+  { value: "keeper", label: "Wicket-keeper" },
+];
 
 const BOWLING_STYLES = [
   "Right-arm pace",
@@ -39,6 +48,7 @@ export function PlayerForm({
   const [jersey, setJersey] = useState(player?.jersey_number?.toString() ?? "");
   const [batting, setBatting] = useState(player?.batting_style ?? "");
   const [bowling, setBowling] = useState(player?.bowling_style ?? "");
+  const [role, setRole] = useState(player?.role ?? "all_rounder");
   const [photoUrl, setPhotoUrl] = useState<string | null>(player?.photo_url ?? null);
   // Password field: prefilled with the current one only when an admin is editing.
   const [password, setPassword] = useState(mode === "admin-edit" ? player?.edit_password ?? "" : "");
@@ -77,6 +87,7 @@ export function PlayerForm({
       jersey_number: jersey ? parseInt(jersey, 10) : null,
       batting_style: (batting || null) as Player["batting_style"],
       bowling_style: bowling || null,
+      role: role || "all_rounder",
       photo_url: photoUrl,
       edit_password: password || null,
     };
@@ -157,35 +168,41 @@ export function PlayerForm({
         </div>
         <div>
           <label className="sg-label">Batting</label>
-          <select className="sg-input" value={batting} onChange={(e) => setBatting(e.target.value)}>
-            <option value="">—</option>
-            <option value="right">Right-hand</option>
-            <option value="left">Left-hand</option>
-          </select>
+          <Select
+            value={batting}
+            onChange={setBatting}
+            placeholder="—"
+            options={[
+              { value: "", label: "—" },
+              { value: "right", label: "Right-hand" },
+              { value: "left", label: "Left-hand" },
+            ]}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="sg-label">Bowling</label>
+          <Select
+            value={bowling}
+            onChange={setBowling}
+            placeholder="—"
+            options={[{ value: "", label: "—" }, ...BOWLING_STYLES.map((s) => ({ value: s, label: s }))]}
+          />
+        </div>
+        <div>
+          <label className="sg-label">Designation</label>
+          <Select value={role} onChange={setRole} options={ROLE_OPTIONS} />
         </div>
       </div>
 
       <div>
-        <label className="sg-label">Bowling</label>
-        <select className="sg-input" value={bowling} onChange={(e) => setBowling(e.target.value)}>
-          <option value="">—</option>
-          {BOWLING_STYLES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div>
         <label className="sg-label">{passwordLabel}</label>
-        <input
-          className="sg-input"
-          type="text"
+        <PasswordInput
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={setPassword}
           required={mode === "public"}
-          maxLength={40}
           placeholder={mode === "self-edit" ? "••••••" : "e.g. Test@123"}
         />
         {passwordHint && <p className="mt-1 text-xs text-ink-muted">{passwordHint}</p>}

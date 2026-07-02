@@ -50,7 +50,7 @@ export function MatchCard({ view }: { view: MatchView }) {
 
   return (
     <Link
-      href={isLive || isBreak ? `/matches/${match.id}` : `/matches/${match.id}`}
+      href={`/matches/${match.id}`}
       className="sg-card block p-4 transition hover:shadow-lift active:scale-[0.99]"
     >
       <div className="mb-3 flex items-center justify-between">

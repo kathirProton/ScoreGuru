@@ -74,6 +74,17 @@ function revalidateScoring(matchId: string) {
   revalidatePath(`/matches/${matchId}`);
 }
 
+/**
+ * Warm the serverless instance + DB connection so the FIRST scoring action of
+ * a session isn't a cold start. Called on the scoring page mount. Cheap and
+ * side-effect-free.
+ */
+export async function warmup() {
+  const supabase = createServiceClient();
+  await supabase.from("matches").select("id").limit(1);
+  return { ok: true };
+}
+
 // ── batsman selection ────────────────────────────────────────────
 export async function selectOpeningBatsmen(
   inningsId: string,
@@ -243,22 +254,19 @@ export async function recordDelivery(
       return { error: "Select the batsman(en) at the crease first." };
   }
 
-  // bowler: first ball of an over takes the selected bowler; otherwise reuse.
+  // The client resolves the bowler (in-progress over reuses it, a fresh over
+  // uses the pick, and a mid-over "change bowler" overrides it). We trust that,
+  // but still enforce the consecutive-over rule at the START of a new over.
   const overInProgress = state.thisOver.length > 0;
-  let resolvedBowler = bowlerId;
-  if (overInProgress) {
-    resolvedBowler = state.currentBowlerId ?? bowlerId;
-  } else {
-    // start of over — enforce consecutive-over rule unless disabled
-    if (
-      ctx.match.block_consecutive_overs &&
-      state.lastBowlerId &&
-      state.lastBowlerId === bowlerId
-    ) {
-      return { error: "Same bowler cannot bowl consecutive overs (toggle off to override)." };
+  const resolvedBowler = bowlerId;
+  if (!resolvedBowler) return { error: "Select a bowler." };
+  if (!overInProgress) {
+    // A bowler can never bowl consecutive overs — bars everyone who bowled the
+    // previous over (covers mid-over bowler changes).
+    if (state.lastOverBowlerIds.includes(bowlerId)) {
+      return { error: "A bowler can't bowl consecutive overs." };
     }
   }
-  if (!resolvedBowler) return { error: "Select a bowler." };
 
   // free hit
   const isFreeHit = state.nextIsFreeHit;
@@ -402,6 +410,46 @@ export async function undoLastBall(matchId: string) {
   await supabase.from("innings").update({ is_closed: false }).in("id", innIds);
   await evaluateAndTransition(supabase, matchId);
   revalidateScoring(matchId);
+  return { ok: true };
+}
+
+/**
+ * Restart the current innings: wipe its deliveries, batting events and dropped
+ * catches, keep the innings row, and reopen the match to live. Useful to redo
+ * an innings from the opening batsmen without touching the other innings.
+ */
+export async function restartInnings(inningsId: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  const { data: innings } = await supabase.from("innings").select("match_id").eq("id", inningsId).single();
+  if (!innings) return { error: "Innings not found." };
+  await supabase.from("deliveries").delete().eq("innings_id", inningsId);
+  await supabase.from("batting_events").delete().eq("innings_id", inningsId);
+  await supabase.from("dropped_catches").delete().eq("innings_id", inningsId);
+  await supabase.from("innings").update({ is_closed: false }).eq("id", inningsId);
+  const { data: match } = await supabase.from("matches").select("status").eq("id", innings.match_id).single();
+  if (match && ["completed", "innings_break", "abandoned"].includes(match.status)) {
+    await supabase
+      .from("matches")
+      .update({ status: "live", result_text: null, winner_team_id: null, is_tie: false, potm_player_id: null, completed_at: null })
+      .eq("id", innings.match_id);
+  }
+  await evaluateAndTransition(supabase, innings.match_id);
+  revalidateScoring(innings.match_id);
+  return { ok: true };
+}
+
+/** Stat-only: record a dropped catch by a fielder. No effect on score/engine. */
+export async function recordDroppedCatch(inningsId: string, fielderId: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  const { data: innings } = await supabase.from("innings").select("match_id").eq("id", inningsId).single();
+  if (!innings) return { error: "Innings not found." };
+  const { error } = await supabase
+    .from("dropped_catches")
+    .insert({ innings_id: inningsId, match_id: innings.match_id, fielder_id: fielderId });
+  if (error) return { error: error.message };
+  revalidateScoring(innings.match_id);
   return { ok: true };
 }
 

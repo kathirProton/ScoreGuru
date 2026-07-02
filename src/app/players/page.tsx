@@ -3,6 +3,7 @@ import { PublicShell } from "@/components/public/PublicShell";
 import { Avatar, EmptyState } from "@/components/ui/primitives";
 import { getPlayers, getStatsBundle } from "@/lib/data";
 import { aggregatePlayers, matchesPlayed } from "@/lib/cricket/stats";
+import { roleLabel } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Players — Score Guru" };
@@ -39,7 +40,7 @@ export default async function PlayersPage() {
                       <span className="text-xs font-medium text-ink-faint">#{p.jersey_number}</span>
                     )}
                   </div>
-                  <p className="truncate text-xs text-ink-muted">{p.bowling_style || "Cricketer"}</p>
+                  <p className="truncate text-xs text-ink-muted">{roleLabel(p.role)}</p>
                   <div className="mt-1.5 flex gap-3 text-xs tabular-nums text-ink-soft">
                     <span>{a ? matchesPlayed(a) : 0} M</span>
                     <span>{a?.runs ?? 0} runs</span>

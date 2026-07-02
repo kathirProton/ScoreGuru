@@ -1,16 +1,21 @@
 "use client";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getBrowserClient } from "@/lib/supabase/browser";
 import { fetchMatchBundle, MatchBundle } from "@/lib/cricket/load";
 import { buildMatchView, playerName } from "@/lib/cricket/matchview";
 import { Avatar, LiveDot } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
+import { Select } from "@/components/ui/Select";
 import { BallChip } from "@/components/match/Chip";
+import { MatchHighlights } from "@/components/match/MatchHighlights";
 import {
   recordDelivery,
+  warmup,
   undoLast,
   undoLastBall,
+  restartInnings,
+  recordDroppedCatch,
   selectOpeningBatsmen,
   selectNextBatsman,
   retireBatsman,
@@ -47,20 +52,36 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
   const [bundle, setBundle] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [overrideConsec, setOverrideConsec] = useState(false);
   // Bowler picked for the upcoming over — scoped to a specific innings + over
   // so a selection never bleeds across innings (each new over/innings re-asks).
   const [selectedBowler, setSelectedBowler] = useState<{ inningsId: string; over: number; id: string } | null>(null);
+  // Mid-over bowler change: forces the bowler for the rest of the current over.
+  const [bowlerOverride, setBowlerOverride] = useState<{ inningsId: string; over: number; id: string } | null>(null);
+  const [changeBowlerOpen, setChangeBowlerOpen] = useState(false);
 
   const [extra, setExtra] = useState<null | ExtraType>(null);
   const [wicketOpen, setWicketOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [restartOpen, setRestartOpen] = useState(false);
+  const [restartInningsOpen, setRestartInningsOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [catchDropOpen, setCatchDropOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // Whether the match was already finished when this console mounted. If it
+  // finishes DURING this session we hold on a "Complete match" gate first.
+  const initiallyFinished = useRef(["completed", "abandoned"].includes(initial.match.status));
+  const [completeAck, setCompleteAck] = useState(false);
 
   const matchId = bundle.match.id;
+
+  // Warm the serverless function + DB on mount so the first ball isn't a cold
+  // start. The scoring pad stays disabled until this resolves so the user
+  // doesn't tap into the cold-start lag.
+  const [warm, setWarm] = useState(false);
+  useEffect(() => {
+    warmup().then(() => setWarm(true)).catch(() => setWarm(true));
+  }, []);
 
   const refetch = useCallback(async () => {
     const fresh = await fetchMatchBundle(getBrowserClient(), matchId);
@@ -126,9 +147,14 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
     [enqueue]
   );
 
-  const renderMatchOptions = () => (
+  const renderMatchOptions = (currentInningsId?: string) => (
     <>
-      <div className="mt-6 flex gap-2 border-t border-line pt-4">
+      <div className="mt-6 flex flex-wrap gap-2 border-t border-line pt-4">
+        {currentInningsId && (
+          <button disabled={busy} onClick={() => setRestartInningsOpen(true)} className="sg-btn-ghost flex-1 py-2.5 text-sm">
+            ↺ Restart innings
+          </button>
+        )}
         <button disabled={busy} onClick={() => setRestartOpen(true)} className="sg-btn-ghost flex-1 py-2.5 text-sm">
           ↻ Restart match
         </button>
@@ -136,6 +162,23 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
           🗑 Delete match
         </button>
       </div>
+      {currentInningsId && (
+        <Modal open={restartInningsOpen} onClose={() => setRestartInningsOpen(false)} title="Restart this innings?">
+          <p className="mb-4 text-sm text-ink-soft">
+            Wipes every ball of the current innings and returns to the opening batsmen. The other innings is untouched. This cannot be undone.
+          </p>
+          <div className="flex gap-2">
+            <button onClick={() => setRestartInningsOpen(false)} className="sg-btn-ghost flex-1 py-2.5">Cancel</button>
+            <button
+              disabled={busy}
+              onClick={() => { setRestartInningsOpen(false); setSelectedBowler(null); setBowlerOverride(null); act(() => restartInnings(currentInningsId)); }}
+              className="sg-btn-danger flex-1 py-2.5"
+            >
+              Restart innings
+            </button>
+          </div>
+        </Modal>
+      )}
       <Modal open={restartOpen} onClose={() => setRestartOpen(false)} title="Restart match?">
         <p className="mb-4 text-sm text-ink-soft">
           Wipes every ball scored and returns the match to the toss. Teams & lineups are kept. This cannot be undone.
@@ -169,24 +212,37 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
 
   const view = useMemo(() => buildMatchView(bundle), [bundle]);
   const current = view.currentInnings;
+  const finished = ["completed", "abandoned"].includes(view.match.status);
+  const showResult = finished && (initiallyFinished.current || completeAck);
 
-  if (["completed", "abandoned"].includes(view.match.status)) {
+  // Match ended this session but not yet acknowledged → hold on a choice screen
+  // (never auto-advance to the result).
+  if (finished && !showResult) {
     return (
-      <div className="mx-auto max-w-md space-y-4 text-center">
-        <span className="text-5xl">🏆</span>
-        <h1 className="font-display text-2xl font-bold text-ink">{view.match.result_text}</h1>
-        {view.match.potm_player_id && (
-          <p className="text-ink-soft">
-            ⭐ POTM: <b>{view.playerById.get(view.match.potm_player_id)?.name}</b>
-          </p>
-        )}
+      <div className="mx-auto max-w-md space-y-3 text-center">
+        <span className="text-4xl">🏁</span>
+        <h1 className="font-display text-xl font-bold text-ink">Match complete</h1>
+        <p className="text-sm text-ink-soft">Nothing moves until you choose.</p>
+        <button onClick={() => setCompleteAck(true)} className="sg-btn-primary w-full py-3">
+          Complete match — view result
+        </button>
+        <button disabled={busy} onClick={() => { setSelectedBowler(null); setBowlerOverride(null); act(() => undoLastBall(matchId)); }} className="sg-btn-ghost w-full py-2.5 text-sm">
+          ↩ Undo last ball
+        </button>
+        {renderMatchOptions()}
+      </div>
+    );
+  }
+
+  if (showResult) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-4">
+        <MatchHighlights view={view} />
         <div className="flex justify-center gap-2">
           <a href={`/matches/${matchId}`} className="sg-btn-primary px-5 py-2.5">View scorecard</a>
-          {current && (
-            <button disabled={busy} onClick={() => act(() => undoLast(current.innings.id))} className="sg-btn-ghost px-4 py-2.5">
-              ↩ Undo last
-            </button>
-          )}
+          <button disabled={busy} onClick={() => { setCompleteAck(false); setSelectedBowler(null); setBowlerOverride(null); act(() => undoLastBall(matchId)); }} className="sg-btn-ghost px-4 py-2.5">
+            ↩ Undo last ball
+          </button>
         </div>
         {renderMatchOptions()}
       </div>
@@ -232,13 +288,16 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
     (p) => !atCrease(p.id) && ["yet_to_bat", "retired_not_out"].includes(statusOf(p.id))
   );
 
-  // bowler for the next ball: in-progress over reuses its bowler; fresh over uses the picked one.
-  // The pick must match BOTH this innings and this over, so a new over/innings prompts again.
-  const bowlerForBall =
-    s.currentBowlerId ??
-    (selectedBowler?.inningsId === current.innings.id && selectedBowler.over === s.currentOverNumber
-      ? selectedBowler.id
-      : null);
+  // bowler for the next ball. Precedence: a mid-over change override (this
+  // innings + over) wins; else the in-progress over reuses its bowler; else the
+  // freshly picked bowler for this innings + over (so each over re-asks).
+  const overrideMatch =
+    bowlerOverride?.inningsId === current.innings.id && bowlerOverride.over === s.currentOverNumber;
+  const selMatch =
+    selectedBowler?.inningsId === current.innings.id && selectedBowler.over === s.currentOverNumber;
+  const bowlerForBall = overrideMatch
+    ? bowlerOverride!.id
+    : s.currentBowlerId ?? (selMatch ? selectedBowler!.id : null);
 
   const needOpeners = s.strikerId === null && s.nonStrikerId === null && !s.isInningsOver;
   const needOneBatsman =
@@ -252,16 +311,38 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
   const inningsId = current.innings.id;
   const record = (payload: DeliveryPayload) =>
     mutate(
-      (b) => appendOptimisticDelivery(b, payload, selectedBowler),
+      (b) => appendOptimisticDelivery(b, payload, bowlerForBall),
       () => recordDelivery(inningsId, bowlerForBall!, payload)
     );
 
-  // Optimistic undo — drop the most recent event locally, then persist.
-  const undo = () =>
+  // Delete the most recent ball/event (optimistic, then persist). Keeps the
+  // bowler selection so undoing the first ball of an over doesn't re-prompt.
+  const deleteLastBall = () =>
     mutate(
       (b) => removeLastEvent(b),
       () => undoLast(inningsId)
     );
+
+  // ScoringPad "Undo": if the over hasn't started (a bowler is picked but no
+  // ball bowled), cancel the bowler selection to re-prompt. Otherwise delete
+  // the last ball (bowler stays put).
+  const undo = () => {
+    if (s.ballsThisOver === 0) {
+      setSelectedBowler(null);
+      setBowlerOverride(null);
+      return;
+    }
+    deleteLastBall();
+  };
+
+  // Undo across the innings break (blocking; also drops the empty next innings).
+  const undoBreak = () => {
+    setSelectedBowler(null);
+    setBowlerOverride(null);
+    act(() => undoLastBall(matchId));
+  };
+
+  const isFirstInningsBreak = current.innings.innings_number === 1 && !current.innings.is_super_over;
 
   const pickOpeners = (a: string, b2: string) =>
     mutate(
@@ -303,10 +384,12 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
       () => replaceBatsman(inningsId, outgoingId, incomingId, incomingOnStrike)
     );
 
+  const doCatchDrop = (fielderId: string) => act(() => recordDroppedCatch(inningsId, fielderId));
+
   return (
     <div className="space-y-4">
       {/* Score header */}
-      <div className="relative overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-brand-50 to-cream-200 p-4">
+      <div className="relative overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-brand-500/15 to-cream-200 p-4">
         <div className="flex items-center justify-between">
           <span className="font-display font-bold text-ink">{current.battingTeam?.name}</span>
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-wicket">
@@ -343,13 +426,16 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
               </div>
             );
           })}
-          {s.currentBowlerId && (
+          {bowlerForBall && (
             <div className="flex justify-between border-t border-line/60 pt-1">
-              <span className="text-ink-muted">🎯 {playerName(view, s.currentBowlerId)}</span>
+              <span className="text-ink-muted">
+                🎯 {playerName(view, bowlerForBall)}
+                {!s.currentBowlerId && <span className="ml-1 text-xs text-ink-faint">· new over</span>}
+              </span>
               <span className="font-mono text-ink-soft">
-                {s.bowlers.find((x) => x.playerId === s.currentBowlerId)?.wickets ?? 0}/
-                {s.bowlers.find((x) => x.playerId === s.currentBowlerId)?.runsConceded ?? 0} (
-                {bowlerOvers(s.bowlers.find((x) => x.playerId === s.currentBowlerId)?.legalBalls ?? 0)})
+                {s.bowlers.find((x) => x.playerId === bowlerForBall)?.wickets ?? 0}/
+                {s.bowlers.find((x) => x.playerId === bowlerForBall)?.runsConceded ?? 0} (
+                {bowlerOvers(s.bowlers.find((x) => x.playerId === bowlerForBall)?.legalBalls ?? 0)})
               </span>
             </div>
           )}
@@ -366,13 +452,31 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
       <ErrorLine error={error} />
 
       {s.isInningsOver ? (
-        <div className="sg-card p-5 text-center">
-          <p className="font-display font-bold text-ink">Innings complete</p>
-          <p className="text-sm text-ink-muted">Finalising result…</p>
-          <button disabled={busy} onClick={() => act(() => undoLast(current.innings.id))} className="sg-btn-ghost mt-3 px-4 py-2 text-sm">
-            ↩ Undo last
-          </button>
-        </div>
+        isFirstInningsBreak ? (
+          <div className="sg-card p-5 text-center">
+            <p className="font-display text-lg font-bold text-ink">Innings complete</p>
+            <p className="mt-1 text-sm text-ink-soft">
+              {current.battingTeam?.name} {s.totalRuns}/{s.wickets} · Target {s.totalRuns + 1}
+            </p>
+            <div className="mt-4 space-y-2">
+              <button disabled={busy} onClick={() => act(async () => { await chain.current; return startSecondInnings(matchId); })} className="sg-btn-primary w-full py-3">
+                {busy ? "Starting…" : "Start 2nd innings"}
+              </button>
+              <button disabled={busy} onClick={undoBreak} className="sg-btn-ghost w-full py-2.5 text-sm">↩ Undo last ball</button>
+            </div>
+          </div>
+        ) : (
+          <div className="sg-card p-5 text-center">
+            <p className="font-display text-lg font-bold text-ink">Innings complete</p>
+            <p className="mt-1 text-sm text-ink-soft">Nothing moves until you choose.</p>
+            <div className="mt-4 space-y-2">
+              <button disabled={busy} onClick={() => act(async () => { await chain.current; setCompleteAck(true); })} className="sg-btn-primary w-full py-3">
+                {busy ? "Finalising…" : "Complete match"}
+              </button>
+              <button disabled={busy} onClick={undoBreak} className="sg-btn-ghost w-full py-2.5 text-sm">↩ Undo last ball</button>
+            </div>
+          </div>
+        )
       ) : needOpeners ? (
         <OpenerPicker players={battingPlayers} busy={busy} view={view} onPick={pickOpeners} />
       ) : needOneBatsman ? (
@@ -380,26 +484,29 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
       ) : needBowler ? (
         <BowlerPicker
           players={bowlingPlayers}
-          lastBowlerId={s.lastBowlerId}
-          blockConsec={view.match.block_consecutive_overs && !overrideConsec}
-          onOverride={() => setOverrideConsec(true)}
+          blockedIds={s.lastOverBowlerIds}
+          canUndo={s.legalBalls > 0}
           busy={busy}
-          onPick={(id) => {
-            setSelectedBowler({ inningsId: current.innings.id, over: s.currentOverNumber, id });
-            setOverrideConsec(false);
-          }}
+          onUndoLastBall={deleteLastBall}
+          onPick={(id) => setSelectedBowler({ inningsId: current.innings.id, over: s.currentOverNumber, id })}
         />
       ) : (
         <ScoringPad
           busy={busy}
+          disabled={!warm}
           onRun={(n) => record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false })}
           onGully={(n) => record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false, no_strike_change: true })}
           onExtra={setExtra}
           onWicket={() => setWicketOpen(true)}
           onManage={() => setManageOpen(true)}
+          onChangeBowler={() => setChangeBowlerOpen(true)}
+          onCatchDrop={() => setCatchDropOpen(true)}
           onUndo={undo}
           onAbandon={() => setAbandonOpen(true)}
         />
+      )}
+      {!warm && !s.isInningsOver && !needOpeners && !needOneBatsman && !needBowler && (
+        <p className="text-center text-xs text-ink-muted">Warming up… buttons enable in a moment.</p>
       )}
 
       <ExtraModal extra={extra} onClose={() => setExtra(null)} busy={busy} onSubmit={(p) => { setExtra(null); record(p); }} />
@@ -429,6 +536,40 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
         onRetire={(playerId, out) => { setManageOpen(false); doRetire(playerId, out); }}
       />
 
+      <Modal open={changeBowlerOpen} onClose={() => setChangeBowlerOpen(false)} title="Change bowler">
+        <p className="mb-3 text-sm text-ink-soft">
+          Pick who bowls the rest of this over. The current over&apos;s remaining balls will be credited to the new bowler.
+        </p>
+        <div className="max-h-72 space-y-1.5 overflow-y-auto">
+          {bowlingPlayers.map((p) => {
+            const blocked = s.lastOverBowlerIds.includes(p.id); // bowled previous over
+            return (
+              <PlayerRow
+                key={p.id}
+                p={p}
+                badge={p.id === bowlerForBall ? "bowling" : blocked ? "bowled last over" : null}
+                disabled={busy || blocked}
+                onClick={() => {
+                  setBowlerOverride({ inningsId: current.innings.id, over: s.currentOverNumber, id: p.id });
+                  setChangeBowlerOpen(false);
+                }}
+              />
+            );
+          })}
+        </div>
+      </Modal>
+
+      <Modal open={catchDropOpen} onClose={() => setCatchDropOpen(false)} title="Catch dropped">
+        <p className="mb-3 text-sm text-ink-soft">
+          Records a dropped catch for the stats only — it doesn&apos;t change the score. Who put it down?
+        </p>
+        <div className="max-h-72 space-y-1.5 overflow-y-auto">
+          {bowlingPlayers.map((p) => (
+            <PlayerRow key={p.id} p={p} disabled={busy} onClick={() => { setCatchDropOpen(false); doCatchDrop(p.id); }} />
+          ))}
+        </div>
+      </Modal>
+
       <Modal open={abandonOpen} onClose={() => setAbandonOpen(false)} title="Abandon match?">
         <p className="mb-4 text-sm text-ink-soft">Marks the match as a no-result. Scores are kept; no winner recorded.</p>
         <div className="flex gap-2">
@@ -443,7 +584,7 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
         </div>
       </Modal>
 
-      {renderMatchOptions()}
+      {renderMatchOptions(current.innings.id)}
     </div>
   );
 }
@@ -524,31 +665,37 @@ function SinglePicker({ title, players, busy, onPick }: { title: string; players
 
 function BowlerPicker({
   players,
-  lastBowlerId,
-  blockConsec,
-  onOverride,
+  blockedIds,
+  canUndo,
   busy,
+  onUndoLastBall,
   onPick,
 }: {
   players: Player[];
-  lastBowlerId: string | null;
-  blockConsec: boolean;
-  onOverride: () => void;
+  blockedIds: string[];
+  canUndo: boolean;
   busy: boolean;
+  onUndoLastBall: () => void;
   onPick: (id: string) => void;
 }) {
+  const blocked = new Set(blockedIds);
   return (
     <div className="sg-card p-4">
       <h3 className="mb-3 font-display font-bold text-ink">Select bowler for this over</h3>
       <div className="max-h-72 space-y-1.5 overflow-y-auto">
-        {players.map((p) => {
-          const blocked = blockConsec && p.id === lastBowlerId;
-          return <PlayerRow key={p.id} p={p} disabled={busy || blocked} onClick={() => onPick(p.id)} />;
-        })}
+        {players.map((p) => (
+          <PlayerRow
+            key={p.id}
+            p={p}
+            badge={blocked.has(p.id) ? "bowled last over" : null}
+            disabled={busy || blocked.has(p.id)}
+            onClick={() => onPick(p.id)}
+          />
+        ))}
       </div>
-      {blockConsec && lastBowlerId && (
-        <button onClick={onOverride} className="mt-3 text-xs font-medium text-brand-600 underline">
-          Allow previous bowler (override)
+      {canUndo && (
+        <button disabled={busy} onClick={onUndoLastBall} className="mt-3 w-full py-2.5 sg-btn-ghost text-sm">
+          ↩ Undo last ball
         </button>
       )}
     </div>
@@ -556,24 +703,28 @@ function BowlerPicker({
 }
 
 function ScoringPad({
-  busy, onRun, onGully, onExtra, onWicket, onManage, onUndo, onAbandon,
+  busy, disabled, onRun, onGully, onExtra, onWicket, onManage, onChangeBowler, onCatchDrop, onUndo, onAbandon,
 }: {
   busy: boolean;
+  disabled?: boolean;
   onRun: (n: number) => void;
   onGully: (n: number) => void;
   onExtra: (e: ExtraType) => void;
   onWicket: () => void;
   onManage: () => void;
+  onChangeBowler: () => void;
+  onCatchDrop: () => void;
   onUndo: () => void;
   onAbandon: () => void;
 }) {
+  const off = busy || !!disabled; // scoring buttons locked until warm / while busy
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-2.5">
         {[0, 1, 2, 3, 4, 5, 6].map((n) => (
           <button
             key={n}
-            disabled={busy}
+            disabled={off}
             onClick={() => onRun(n)}
             className={`sg-btn h-16 text-2xl font-bold ${
               n === 4 ? "bg-boundary text-white" : n === 6 ? "bg-brand text-brand-900 shadow-glow" : "border border-line bg-cream-200 text-ink"
@@ -582,26 +733,30 @@ function ScoringPad({
             {n}
           </button>
         ))}
-        <button disabled={busy} onClick={onWicket} className="sg-btn-danger h-16 text-lg font-bold">OUT</button>
+        <button disabled={off} onClick={onWicket} className="sg-btn-danger h-16 text-lg font-bold">OUT</button>
       </div>
       {/* Gully runs: credited to batsman + team, but strike stays put. */}
       <div className="grid grid-cols-2 gap-2.5">
-        <button disabled={busy} onClick={() => onGully(1)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
+        <button disabled={off} onClick={() => onGully(1)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
           1G <span className="font-normal text-ink-muted">· keep strike</span>
         </button>
-        <button disabled={busy} onClick={() => onGully(2)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
+        <button disabled={off} onClick={() => onGully(2)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
           2G <span className="font-normal text-ink-muted">· keep strike</span>
         </button>
       </div>
       <div className="grid grid-cols-4 gap-2.5">
-        <button disabled={busy} onClick={() => onExtra("wide")} className="sg-btn-ghost h-12 text-sm">Wide</button>
-        <button disabled={busy} onClick={() => onExtra("no_ball")} className="sg-btn-ghost h-12 text-sm">No Ball</button>
-        <button disabled={busy} onClick={() => onExtra("bye")} className="sg-btn-ghost h-12 text-sm">Bye</button>
-        <button disabled={busy} onClick={() => onExtra("leg_bye")} className="sg-btn-ghost h-12 text-sm">Leg Bye</button>
+        <button disabled={off} onClick={() => onExtra("wide")} className="sg-btn-ghost h-12 text-sm">Wide</button>
+        <button disabled={off} onClick={() => onExtra("no_ball")} className="sg-btn-ghost h-12 text-sm">No Ball</button>
+        <button disabled={off} onClick={() => onExtra("bye")} className="sg-btn-ghost h-12 text-sm">Bye</button>
+        <button disabled={off} onClick={() => onExtra("leg_bye")} className="sg-btn-ghost h-12 text-sm">Leg Bye</button>
       </div>
       <div className="grid grid-cols-3 gap-2.5">
-        <button disabled={busy} onClick={onUndo} className="sg-btn-ghost h-12 text-sm">↩ Undo</button>
         <button disabled={busy} onClick={onManage} className="sg-btn-ghost h-12 text-sm">⇄ Batsmen</button>
+        <button disabled={off} onClick={onChangeBowler} className="sg-btn-ghost h-12 text-sm">⟳ Bowler</button>
+        <button disabled={off} onClick={onCatchDrop} className="sg-btn-ghost h-12 text-sm">🧤 Drop</button>
+      </div>
+      <div className="grid grid-cols-2 gap-2.5">
+        <button disabled={busy} onClick={onUndo} className="sg-btn-ghost h-12 text-sm">↩ Undo</button>
         <button disabled={busy} onClick={onAbandon} className="sg-btn-ghost h-12 text-sm text-wicket">Abandon</button>
       </div>
     </div>
@@ -728,10 +883,12 @@ function WicketModal({
         {needsFielder && (
           <div>
             <p className="sg-label">{type === "stumped" ? "Keeper" : "Fielder"}{type === "run_out" ? " (optional)" : ""}</p>
-            <select className="sg-input" value={fielder ?? ""} onChange={(e) => setFielder(e.target.value || null)}>
-              <option value="">Select…</option>
-              {fielders.map((f) => (<option key={f.id} value={f.id}>{f.nickname || f.name}</option>))}
-            </select>
+            <Select
+              value={fielder ?? ""}
+              onChange={(v) => setFielder(v || null)}
+              placeholder="Select…"
+              options={fielders.map((f) => ({ value: f.id, label: f.nickname || f.name }))}
+            />
           </div>
         )}
         <button
@@ -877,16 +1034,11 @@ function maxSeq(b: MatchBundle): number {
 function appendOptimisticDelivery(
   b: MatchBundle,
   payload: DeliveryPayload,
-  selectedBowler: { inningsId: string; over: number; id: string } | null
+  bowler: string | null
 ): MatchBundle {
   const ci = buildMatchView(b).currentInnings;
   if (!ci) return b;
   const s = ci.state;
-  const bowler =
-    s.currentBowlerId ??
-    (selectedBowler?.inningsId === ci.innings.id && selectedBowler.over === s.currentOverNumber
-      ? selectedBowler.id
-      : null);
   if (!bowler || s.strikerId === null) return b; // let the server place it
   const legal = payload.extra_type === "none" || payload.extra_type === "bye" || payload.extra_type === "leg_bye";
   const seq = maxSeq(b) + 1;

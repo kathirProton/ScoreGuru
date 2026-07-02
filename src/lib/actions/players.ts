@@ -11,6 +11,8 @@ interface PlayerInput {
   batting_style?: BattingHand | null;
   bowling_style?: string | null;
   photo_url?: string | null;
+  /** Designation: batsman | bowler | all_rounder | keeper. */
+  role?: string | null;
   /** Plain-text self-edit password. Optional on update (blank = keep). */
   edit_password?: string | null;
 }
@@ -37,6 +39,7 @@ function clean(input: PlayerInput) {
     batting_style: input.batting_style || null,
     bowling_style: input.bowling_style?.trim() || null,
     photo_url: input.photo_url || null,
+    role: input.role || null,
   };
 }
 

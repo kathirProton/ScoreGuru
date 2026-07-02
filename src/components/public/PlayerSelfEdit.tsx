@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/Modal";
 import { PlayerForm } from "@/components/PlayerForm";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { checkPlayerPassword } from "@/lib/actions/players";
 import type { Player } from "@/lib/types";
 
@@ -50,14 +51,7 @@ export function PlayerSelfEdit({ player }: { player: Player }) {
             <p className="text-sm text-ink-soft">
               Enter your edit password to change your photo and details.
             </p>
-            <input
-              className="sg-input"
-              type="text"
-              autoFocus
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Edit password"
-            />
+            <PasswordInput value={password} onChange={setPassword} autoFocus placeholder="Edit password" />
             {error && <p className="text-sm font-medium text-wicket">{error}</p>}
             <button type="submit" disabled={busy || !password} className="sg-btn-primary w-full py-3">
               {busy ? "Checking…" : "Unlock"}

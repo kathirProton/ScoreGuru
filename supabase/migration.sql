@@ -55,10 +55,12 @@ create table if not exists players (
   bowling_style text,                       -- e.g. "right-arm pace", "left-arm spin"
   photo_url     text,
   edit_password text not null default 'Test@123', -- plain-text self-edit password (low-security by design)
+  role          text,                             -- designation: batsman | bowler | all_rounder | keeper (null → all-rounder)
   status        player_status not null default 'pending',
   created_at    timestamptz not null default now()
 );
 alter table players add column if not exists edit_password text not null default 'Test@123';
+alter table players add column if not exists role text;
 -- Name is the identity: unique among everyone NOT rejected (rejected names freed up).
 create unique index if not exists players_name_active_uidx
   on players (lower(name)) where status <> 'rejected';
@@ -181,6 +183,17 @@ create table if not exists batting_events (
 );
 create index if not exists batting_events_innings_seq_idx on batting_events (innings_id, seq);
 
+-- ───────────── DROPPED CATCHES (stat-only, no scoring effect) ─────────────
+create table if not exists dropped_catches (
+  id         uuid primary key default gen_random_uuid(),
+  match_id   uuid not null references matches(id) on delete cascade,
+  innings_id uuid not null references innings(id) on delete cascade,
+  fielder_id uuid not null references players(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists dropped_catches_match_idx on dropped_catches (match_id);
+create index if not exists dropped_catches_fielder_idx on dropped_catches (fielder_id);
+
 -- ════════════════════════════════════════════════════════════════
 -- ROW LEVEL SECURITY
 -- Public (anon) may SELECT everything (read-only viewer).
@@ -197,11 +210,12 @@ alter table match_players  enable row level security;
 alter table innings        enable row level security;
 alter table deliveries     enable row level security;
 alter table batting_events enable row level security;
+alter table dropped_catches enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['players','teams','team_players','matches','match_players','innings','deliveries','batting_events']
+  foreach t in array array['players','teams','team_players','matches','match_players','innings','deliveries','batting_events','dropped_catches']
   loop
     execute format('drop policy if exists "public_select_%1$s" on %1$s', t);
     execute format('create policy "public_select_%1$s" on %1$s for select using (true)', t);

@@ -1,6 +1,7 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect } from "react";
+import { popoverJustClosed } from "./popover";
 
 export function Modal({
   open,
@@ -33,7 +34,10 @@ export function Modal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => { if (!popoverJustClosed()) onClose(); }}
+          />
           <motion.div
             className="relative z-10 max-h-[90dvh] w-full overflow-y-auto rounded-t-3xl border border-line bg-cream p-5 shadow-lift sm:max-w-md sm:rounded-3xl"
             initial={{ y: 40, opacity: 0, scale: 0.98 }}

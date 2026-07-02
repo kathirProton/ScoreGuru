@@ -42,6 +42,24 @@ export type Database = {
         }
         Relationships: []
       }
+      dropped_catches: {
+        Row: {
+          created_at: string
+          fielder_id: string
+          id: string
+          innings_id: string
+          match_id: string
+        }
+        Insert: {
+          created_at?: string
+          fielder_id: string
+          id?: string
+          innings_id: string
+          match_id: string
+        }
+        Update: Partial<Database["public"]["Tables"]["dropped_catches"]["Insert"]>
+        Relationships: []
+      }
       deliveries: {
         Row: {
           ball_in_over: number
@@ -191,6 +209,7 @@ export type Database = {
           name: string
           nickname: string | null
           photo_url: string | null
+          role: string | null
           status: Database["public"]["Enums"]["player_status"]
         }
         Insert: {
@@ -203,6 +222,7 @@ export type Database = {
           name: string
           nickname?: string | null
           photo_url?: string | null
+          role?: string | null
           status?: Database["public"]["Enums"]["player_status"]
         }
         Update: Partial<Database["public"]["Tables"]["players"]["Insert"]>
