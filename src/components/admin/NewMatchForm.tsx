@@ -82,27 +82,44 @@ function LineupPicker({
   );
 }
 
+export interface NewMatchInitial {
+  name: string;
+  overs: string;
+  venue: string;
+  freeHit: boolean;
+  lastMan: boolean;
+  superOvers: string;
+  teamA: string;
+  teamB: string;
+  lineupA: string[];
+  lineupB: string[];
+}
+
 export function NewMatchForm({
   teams,
   players,
   rosters,
+  initial,
 }: {
   teams: Team[];
   players: Player[];
   rosters: Record<string, string[]>;
+  initial?: NewMatchInitial;
 }) {
   const router = useRouter();
   const approvedIds = new Set(players.map((p) => p.id));
-  const [name, setName] = useState("");
-  const [overs, setOvers] = useState("6");
-  const [venue, setVenue] = useState("");
-  const [freeHit, setFreeHit] = useState(true);
-  const [lastMan, setLastMan] = useState(true);
-  const [superOvers, setSuperOvers] = useState("1");
-  const [teamA, setTeamA] = useState("");
-  const [teamB, setTeamB] = useState("");
-  const [lineupA, setLineupA] = useState<Set<string>>(new Set());
-  const [lineupB, setLineupB] = useState<Set<string>>(new Set());
+  // Only pre-select players who are still approved and available.
+  const seedLineup = (ids: string[] = []) => new Set(ids.filter((id) => approvedIds.has(id)));
+  const [name, setName] = useState(initial?.name ?? "");
+  const [overs, setOvers] = useState(initial?.overs ?? "6");
+  const [venue, setVenue] = useState(initial?.venue ?? "");
+  const [freeHit, setFreeHit] = useState(initial?.freeHit ?? true);
+  const [lastMan, setLastMan] = useState(initial?.lastMan ?? true);
+  const [superOvers, setSuperOvers] = useState(initial?.superOvers ?? "1");
+  const [teamA, setTeamA] = useState(initial?.teamA ?? "");
+  const [teamB, setTeamB] = useState(initial?.teamB ?? "");
+  const [lineupA, setLineupA] = useState<Set<string>>(() => seedLineup(initial?.lineupA));
+  const [lineupB, setLineupB] = useState<Set<string>>(() => seedLineup(initial?.lineupB));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

@@ -28,6 +28,48 @@ export async function getMatchBundle(matchId: string) {
   return fetchMatchBundle(supabase, matchId);
 }
 
+/**
+ * Config of a prior match, shaped to pre-fill the New Match form. Pass a match
+ * id, or "last" (default) for the most recently created match. Returns null if
+ * there's no match to copy. Lets the admin tweak (e.g. overs) before creating.
+ */
+export async function getMatchConfig(sourceId: string = "last") {
+  const supabase = createReadClient();
+  let match: Match | null;
+  if (sourceId && sourceId !== "last") {
+    const { data } = await supabase.from("matches").select("*").eq("id", sourceId).maybeSingle();
+    match = data;
+  } else {
+    const { data } = await supabase
+      .from("matches")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    match = data;
+  }
+  if (!match) return null;
+
+  const { data: mp } = await supabase
+    .from("match_players")
+    .select("team_id,player_id,batting_order")
+    .eq("match_id", match.id)
+    .order("batting_order", { ascending: true });
+  const rows = mp ?? [];
+  return {
+    name: match.name ?? "",
+    overs: String(match.overs ?? 6),
+    venue: match.venue ?? "",
+    freeHit: match.free_hit_enabled ?? true,
+    lastMan: match.last_man_stands ?? true,
+    superOvers: String(match.super_over_overs ?? 1),
+    teamA: match.team_a_id ?? "",
+    teamB: match.team_b_id ?? "",
+    lineupA: rows.filter((r) => r.team_id === match!.team_a_id).map((r) => r.player_id),
+    lineupB: rows.filter((r) => r.team_id === match!.team_b_id).map((r) => r.player_id),
+  };
+}
+
 export async function getCompletedMatches(): Promise<Match[]> {
   const supabase = createReadClient();
   const { data } = await supabase

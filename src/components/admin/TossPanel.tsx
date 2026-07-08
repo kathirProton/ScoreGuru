@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/primitives";
+import { CoinToss } from "@/components/ui/CoinToss";
 import { setTossAndStart } from "@/lib/actions/matches";
 import type { Team, TossDecision } from "@/lib/types";
 
@@ -39,6 +40,10 @@ export function TossPanel({
         <span className="text-4xl">🪙</span>
         <h1 className="mt-2 font-display text-2xl font-bold text-ink">Toss</h1>
         <p className="text-ink-muted">Record the toss to begin scoring.</p>
+      </div>
+
+      <div className="sg-card flex flex-col items-center p-4">
+        <CoinToss />
       </div>
 
       <div className="sg-card p-4">

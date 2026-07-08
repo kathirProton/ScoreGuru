@@ -81,6 +81,82 @@ body {
   }
 }
 
+/* Thala-or-Thalapathy coin toss */
+.sg-coin-scene {
+  perspective: 1200px;
+  display: inline-block;
+}
+.sg-coin-lift {
+  animation: sg-coin-float 3.6s ease-in-out infinite;
+  will-change: transform;
+}
+.sg-coin-lift.is-spinning {
+  animation: sg-coin-toss 1.6s cubic-bezier(0.33, 0, 0.2, 1);
+}
+.sg-coin {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 1.6s cubic-bezier(0.2, 0.72, 0.13, 1);
+  cursor: pointer;
+  border-radius: 9999px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  outline: none;
+}
+.sg-coin:active {
+  filter: brightness(0.97);
+}
+.sg-coin-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 255, 255, 0.35),
+    inset 0 0 0 9px rgba(0, 0, 0, 0.12),
+    0 14px 30px rgba(0, 0, 0, 0.55),
+    0 3px 8px rgba(0, 0, 0, 0.4);
+}
+.sg-coin-back {
+  transform: rotateX(180deg);
+}
+/* glossy sweep across each face */
+.sg-coin-shine {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0.08) 22%,
+    transparent 42%,
+    transparent 60%,
+    rgba(255, 255, 255, 0.12) 82%
+  );
+  pointer-events: none;
+}
+@keyframes sg-coin-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes sg-coin-toss {
+  0% { transform: translateY(0) scale(1); }
+  35% { transform: translateY(-46px) scale(1.06); }
+  55% { transform: translateY(-58px) scale(1.06); }
+  100% { transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sg-coin-lift, .sg-coin-lift.is-spinning { animation: none; }
+  .sg-coin { transition-duration: 0.35s; }
+}
+
 /* Safe-area padding for installed PWA */
 .safe-bottom {
   padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);

@@ -73,61 +73,6 @@ export async function createMatch(input: CreateMatchInput) {
   return { ok: true, matchId: match.id };
 }
 
-/**
- * Create a fresh match reusing the previous match's teams, lineups, overs,
- * venue and rules. Starts in `setup` so the toss is taken again.
- */
-export async function createMatchFromLast(sourceMatchId?: string) {
-  await requireAdmin();
-  const supabase = createServiceClient();
-
-  let source;
-  if (sourceMatchId) {
-    const { data } = await supabase.from("matches").select("*").eq("id", sourceMatchId).single();
-    source = data;
-  } else {
-    const { data } = await supabase
-      .from("matches")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    source = data;
-  }
-  if (!source) return { error: "No previous match to copy." };
-
-  const { data: match, error } = await supabase
-    .from("matches")
-    .insert({
-      name: source.name,
-      overs: source.overs,
-      venue: source.venue,
-      team_a_id: source.team_a_id,
-      team_b_id: source.team_b_id,
-      free_hit_enabled: source.free_hit_enabled,
-      last_man_stands: source.last_man_stands,
-      block_consecutive_overs: source.block_consecutive_overs,
-      super_over_overs: source.super_over_overs,
-      status: "setup",
-    })
-    .select()
-    .single();
-  if (error || !match) return { error: error?.message ?? "Failed to create match." };
-
-  const { data: prevLineup } = await supabase
-    .from("match_players")
-    .select("team_id,player_id,batting_order")
-    .eq("match_id", sourceMatchId ?? source.id);
-  if (prevLineup && prevLineup.length > 0) {
-    await supabase
-      .from("match_players")
-      .insert(prevLineup.map((r) => ({ ...r, match_id: match.id })));
-  }
-
-  revalidatePath("/admin");
-  return { ok: true, matchId: match.id };
-}
-
 /** Has this player already batted, bowled or fielded in this match? */
 async function playerParticipated(
   supabase: ReturnType<typeof createServiceClient>,

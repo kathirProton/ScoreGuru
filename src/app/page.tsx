@@ -4,6 +4,7 @@ import { MatchCard } from "@/components/public/MatchCard";
 import { BrandMark } from "@/components/ui/Brand";
 import { SectionTitle, EmptyState, LiveDot } from "@/components/ui/primitives";
 import { Leaderboard } from "@/components/public/Leaderboard";
+import { CoinToss } from "@/components/ui/CoinToss";
 import { getLiveMatches, getCompletedMatches, getMatchView, getStatsBundle } from "@/lib/data";
 import { aggregatePlayers, matchesPlayed, bestFigures } from "@/lib/cricket/stats";
 
@@ -130,6 +131,22 @@ export default async function HomePage() {
           </div>
         </section>
       )}
+
+      {/* Toss for fun */}
+      <section className="mt-8">
+        <SectionTitle>Toss for fun</SectionTitle>
+        <div className="sg-card relative overflow-hidden p-7">
+          <div className="absolute -left-10 -top-10 h-40 w-40 rounded-full bg-brand/10 blur-2xl" />
+          <div className="absolute -bottom-12 -right-8 h-40 w-40 rounded-full bg-[#f6cd50]/10 blur-2xl" />
+          <div className="relative flex flex-col items-center">
+            <p className="mb-5 max-w-sm text-center text-sm text-ink-soft">
+              Can&apos;t decide who bats first? Settle it the only way that matters —
+              <span className="font-semibold text-brand-600"> Thala or Thalapathy</span>.
+            </p>
+            <CoinToss />
+          </div>
+        </div>
+      </section>
     </PublicShell>
   );
 }
