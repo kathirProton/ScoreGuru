@@ -6,7 +6,6 @@ import { Avatar } from "@/components/ui/primitives";
 export function MatchHighlights({ view }: { view: MatchView }) {
   const h = matchHighlights(view);
   const potm = h.potmId ? view.playerById.get(h.potmId) : null;
-  const worst = h.worstId ? view.playerById.get(h.worstId) : null;
 
   return (
     <div className="space-y-4">
@@ -16,32 +15,18 @@ export function MatchHighlights({ view }: { view: MatchView }) {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {potm && (
-          <div className="sg-card border-brand/30 p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-brand-600">🏆 Aatta Naayakan</p>
-            <div className="mt-2 flex items-center gap-3">
-              <Avatar name={potm.name} photo={potm.photo_url} size={44} ring />
-              <div className="min-w-0">
-                <p className="truncate font-display font-bold text-ink">{potm.name}</p>
-                <p className="text-xs text-ink-muted">Player of the match</p>
-              </div>
+      {potm && (
+        <div className="sg-card border-brand/30 p-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-brand-600">🏆 Aatta Naayakan</p>
+          <div className="mt-2 flex items-center gap-3">
+            <Avatar name={potm.name} photo={potm.photo_url} size={44} ring />
+            <div className="min-w-0">
+              <p className="truncate font-display font-bold capitalize text-ink">{potm.name}</p>
+              <p className="text-xs text-ink-muted">Player of the match</p>
             </div>
           </div>
-        )}
-        {worst && (
-          <div className="sg-card border-wicket/30 p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-wicket">😵 Sodhappal</p>
-            <div className="mt-2 flex items-center gap-3">
-              <Avatar name={worst.name} photo={worst.photo_url} size={44} />
-              <div className="min-w-0">
-                <p className="truncate font-display font-bold text-ink">{worst.name}</p>
-                <p className="text-xs text-ink-muted">Off day at the office</p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         {h.topScore && (

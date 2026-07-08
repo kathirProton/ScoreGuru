@@ -77,6 +77,11 @@ export interface OverDelivery {
   isBoundary4: boolean;
   isBoundary6: boolean;
   isExtra: boolean;
+  /** Legal delivery (counts toward the over): none / bye / leg-bye. Wides & no-balls are not. */
+  legal: boolean;
+  /** true only for a plain bat delivery (no extra, no wicket) — safe to re-score by tap. */
+  editable: boolean;
+  runsOffBat: number;
   runs: number; // total runs from this delivery
 }
 
@@ -437,6 +442,9 @@ export function deriveInnings(input: DeriveInput): InningsState {
       isBoundary4: d.extra_type !== "wide" && d.runs_off_bat === 4,
       isBoundary6: d.extra_type !== "wide" && d.runs_off_bat === 6,
       isExtra: d.extra_type !== "none",
+      legal,
+      editable: d.extra_type === "none" && !d.is_wicket,
+      runsOffBat: d.runs_off_bat,
       runs: total,
     });
     o.runs += total;
@@ -654,4 +662,35 @@ export function economy(runs: number, legalBalls: number): number {
 }
 export function bowlerOvers(legalBalls: number): string {
   return `${Math.floor(legalBalls / 6)}.${legalBalls % 6}`;
+}
+
+/**
+ * Which rows one "undo last ball" should remove, given an innings' deliveries
+ * and events (both by seq). If the most recent delivery was a wicket and the
+ * only rows after it are the replacement batsman(en) coming in, the whole ball
+ * is reverted (wicket + the new batsman) so the crease looks exactly like a
+ * ball ago. Otherwise a trailing manual event (swap/retire/replace) or the last
+ * delivery alone is removed. Pure so the server action and the optimistic
+ * client undo agree exactly.
+ */
+export function planUndoBall(
+  deliveries: { id: string; seq: number; is_wicket: boolean }[],
+  events: { id: string; seq: number; event_type: string }[]
+): { deliveryIds: string[]; eventIds: string[] } {
+  const ds = [...deliveries].sort((a, b) => a.seq - b.seq);
+  const es = [...events].sort((a, b) => a.seq - b.seq);
+  const lastD = ds[ds.length - 1];
+  const lastE = es[es.length - 1];
+  const dSeq = lastD?.seq ?? -1;
+  const eSeq = lastE?.seq ?? -1;
+  if (eSeq > dSeq) {
+    const trailing = es.filter((e) => e.seq > dSeq);
+    const allIn = trailing.length > 0 && trailing.every((e) => e.event_type === "in");
+    if (allIn && lastD && lastD.is_wicket) {
+      return { deliveryIds: [lastD.id], eventIds: trailing.map((e) => e.id) };
+    }
+    return { deliveryIds: [], eventIds: [lastE.id] };
+  }
+  if (dSeq >= 0) return { deliveryIds: [lastD.id], eventIds: [] };
+  return { deliveryIds: [], eventIds: [] };
 }

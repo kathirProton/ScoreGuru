@@ -11,7 +11,6 @@ import {
   playerEconomy,
   bestFigures,
   matchesPlayed,
-  worstPerformerCounts,
   dismissalHeadToHead,
   boundaryHeadToHead,
 } from "@/lib/cricket/stats";
@@ -50,10 +49,6 @@ export default async function StatsPage({
     : bundle.matches;
   const scopedInput = { ...bundle, matches: filteredMatches };
   const aggs = aggregatePlayers(scopedInput);
-  const sodhappalRows = [...worstPerformerCounts(scopedInput).entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
-    .map(([playerId, count]) => ({ playerId, value: `${count}` }));
   const h2h = dismissalHeadToHead(scopedInput);
   const boundaryPairs = boundaryHeadToHead(scopedInput);
   const topSixes = boundaryPairs.filter((p) => p.sixes > 0).sort((a, b) => b.sixes - a.sixes).slice(0, 6);
@@ -218,13 +213,6 @@ export default async function StatsPage({
             emoji="🎩"
             players={players}
             rows={board(aggs, (a) => a.hatTricks, (a) => `${a.hatTricks}`)}
-          />
-          <Leaderboard
-            title="Most Sodhappals"
-            emoji="😵"
-            players={players}
-            accent="text-wicket"
-            rows={sodhappalRows}
           />
           <Leaderboard
             title="Most Catches Dropped"

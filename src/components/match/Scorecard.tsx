@@ -113,7 +113,7 @@ function InningsTable({ view, iv }: { view: MatchView; iv: InningsView }) {
         <div className="border-t border-line px-4 py-2.5 text-xs text-ink-muted">
           <span className="font-medium text-ink-soft">Yet to bat: </span>
           {yetToBat.map((p, i) => (
-            <span key={p.id}>
+            <span key={p.id} className="capitalize">
               {p.nickname || p.name}
               {i < yetToBat.length - 1 ? ", " : ""}
             </span>

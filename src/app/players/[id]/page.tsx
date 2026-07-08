@@ -12,6 +12,7 @@ import {
   matchesPlayed,
   winPct,
 } from "@/lib/cricket/stats";
+import { bowlerOvers } from "@/lib/cricket/engine";
 import { fmt1, fmt2, roleLabel } from "@/lib/format";
 import { MatchCard } from "@/components/public/MatchCard";
 import { PlayerSelfEdit } from "@/components/public/PlayerSelfEdit";
@@ -50,7 +51,7 @@ export default async function PlayerProfile({ params }: { params: { id: string }
       <div className="sg-card flex items-center gap-4 p-5">
         <PlayerPhoto name={player.name} photo={player.photo_url} size={76} />
         <div className="min-w-0 flex-1">
-          <h1 className="font-display text-2xl font-bold tracking-tight text-ink">{player.name}</h1>
+          <h1 className="font-display text-2xl font-bold capitalize tracking-tight text-ink">{player.name}</h1>
           {player.nickname && <p className="text-ink-soft">“{player.nickname}”</p>}
           <div className="mt-2 flex flex-wrap gap-2">
             {player.jersey_number != null && <Pill tone="brand">#{player.jersey_number}</Pill>}
@@ -68,23 +69,25 @@ export default async function PlayerProfile({ params }: { params: { id: string }
       </SectionTitle>
       <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-6">
         <Stat label="Matches" value={a ? matchesPlayed(a) : 0} />
+        <Stat label="Innings" value={a?.inningsBatted ?? 0} />
         <Stat label="Runs" value={a?.runs ?? 0} tone="text-brand-600" />
         <Stat label="High" value={a?.highScore ?? 0} />
         <Stat label="Avg" value={a ? fmt1(battingAverage(a)) : "—"} />
         <Stat label="SR" value={a ? fmt1(playerStrikeRate(a)) : "—"} />
+        <Stat label="Balls" value={a?.balls ?? 0} />
         <Stat label="50/100" value={`${a?.fifties ?? 0}/${a?.hundreds ?? 0}`} />
         <Stat label="Fours" value={a?.fours ?? 0} />
         <Stat label="Sixes" value={a?.sixes ?? 0} tone="text-boundary" />
         <Stat label="Ducks" value={a?.ducks ?? 0} tone="text-wicket" />
-        <Stat label="Wins" value={a?.wins ?? 0} />
         <Stat label="Win %" value={a ? fmt1(winPct(a)) : "—"} />
-        <Stat label="Balls" value={a?.balls ?? 0} />
       </div>
 
       <SectionTitle>
         <span className="mt-6 block">Bowling & Fielding</span>
       </SectionTitle>
       <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-6">
+        <Stat label="Overs" value={a ? bowlerOvers(a.ballsBowled) : "0.0"} />
+        <Stat label="Runs" value={a?.runsConceded ?? 0} />
         <Stat label="Wickets" value={a?.wickets ?? 0} tone="text-brand-600" />
         <Stat label="Best" value={a ? bestFigures(a) : "—"} />
         <Stat label="Econ" value={a && a.ballsBowled > 0 ? fmt2(playerEconomy(a)) : "—"} />

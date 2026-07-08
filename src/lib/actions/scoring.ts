@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "../auth";
 import { createServiceClient } from "../supabase/server";
-import { deriveInnings, InningsState } from "../cricket/engine";
+import { deriveInnings, InningsState, planUndoBall } from "../cricket/engine";
 import { computePOTM } from "../cricket/stats";
 import {
   ExtraType,
@@ -324,7 +324,78 @@ export async function recordDelivery(
   return { ok: true };
 }
 
+/**
+ * Re-score a single already-recorded plain-bat delivery (fixing a mis-tapped
+ * run). Only legal, non-extra, non-wicket deliveries can be edited this way —
+ * the log stays immutable in shape, we just correct the runs on one row and let
+ * the engine re-derive everything (strike rotation, totals) from the replay.
+ */
+export async function editDeliveryRuns(deliveryId: string, runs: number) {
+  await requireAdmin();
+  if (!Number.isInteger(runs) || runs < 0 || runs > 6)
+    return { error: "Runs must be a whole number between 0 and 6." };
+  const supabase = createServiceClient();
+  const { data: delivery } = await supabase
+    .from("deliveries")
+    .select("*")
+    .eq("id", deliveryId)
+    .single();
+  if (!delivery) return { error: "Delivery not found." };
+  if (delivery.extra_type !== "none" || delivery.is_wicket)
+    return { error: "Only a normal bat delivery can be re-scored — undo the ball instead." };
+
+  const { data: innings } = await supabase
+    .from("innings")
+    .select("match_id")
+    .eq("id", delivery.innings_id)
+    .single();
+  if (!innings) return { error: "Innings not found." };
+
+  const { error } = await supabase
+    .from("deliveries")
+    .update({ runs_off_bat: runs })
+    .eq("id", deliveryId);
+  if (error) return { error: error.message };
+
+  await evaluateAndTransition(supabase, innings.match_id);
+  revalidateScoring(innings.match_id);
+  return { ok: true };
+}
+
 // ── undo ─────────────────────────────────────────────────────────
+
+/**
+ * Undo the last ball of an innings. Unlike undoLast (which drops a single
+ * highest-seq row), this reverts a wicket ball together with the replacement
+ * batsman it forced in, so one tap fully restores the pre-ball state.
+ */
+export async function undoBall(inningsId: string) {
+  await requireAdmin();
+  const supabase = createServiceClient();
+  const ctx = await loadInningsCtx(supabase, inningsId);
+  const plan = planUndoBall(ctx.deliveries, ctx.events);
+  if (plan.deliveryIds.length === 0 && plan.eventIds.length === 0)
+    return { error: "Nothing to undo." };
+
+  if (plan.eventIds.length)
+    await supabase.from("batting_events").delete().in("id", plan.eventIds);
+  if (plan.deliveryIds.length)
+    await supabase.from("deliveries").delete().in("id", plan.deliveryIds);
+
+  // undo may revert a completed / innings-break state back to live
+  const { data: match } = await supabase.from("matches").select("*").eq("id", ctx.match.id).single();
+  if (match && (match.status === "completed" || match.status === "innings_break" || match.status === "abandoned")) {
+    await supabase
+      .from("matches")
+      .update({ status: "live", result_text: null, winner_team_id: null, is_tie: false, potm_player_id: null, completed_at: null })
+      .eq("id", ctx.match.id);
+    await supabase.from("innings").update({ is_closed: false }).eq("id", inningsId);
+  }
+  await evaluateAndTransition(supabase, ctx.match.id);
+  revalidateScoring(ctx.match.id);
+  return { ok: true };
+}
+
 export async function undoLast(inningsId: string) {
   await requireAdmin();
   const supabase = createServiceClient();

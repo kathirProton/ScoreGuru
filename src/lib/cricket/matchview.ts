@@ -65,8 +65,13 @@ export function buildMatchView(bundle: MatchBundle): MatchView {
   };
 }
 
+/** Title-case a display name so every player's name reads with capitalised words. */
+export function titleCaseName(name: string): string {
+  return name.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function playerName(view: MatchView, id: string | null | undefined): string {
   if (!id) return "—";
   const p = view.playerById.get(id);
-  return p ? p.nickname || p.name : "Unknown";
+  return p ? titleCaseName(p.nickname || p.name) : "Unknown";
 }

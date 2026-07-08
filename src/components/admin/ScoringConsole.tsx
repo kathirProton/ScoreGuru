@@ -7,12 +7,11 @@ import { buildMatchView, playerName } from "@/lib/cricket/matchview";
 import { Avatar, LiveDot } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
-import { BallChip } from "@/components/match/Chip";
 import { MatchHighlights } from "@/components/match/MatchHighlights";
 import {
   recordDelivery,
   warmup,
-  undoLast,
+  undoBall,
   undoLastBall,
   restartInnings,
   recordDroppedCatch,
@@ -21,6 +20,7 @@ import {
   retireBatsman,
   swapStrike,
   replaceBatsman,
+  editDeliveryRuns,
   startSecondInnings,
 } from "@/lib/actions/scoring";
 import { abandonMatch, restartMatch, deleteMatch } from "@/lib/actions/matches";
@@ -33,7 +33,8 @@ import type {
   BattingEventType,
 } from "@/lib/types";
 import { WICKET_LABELS } from "@/lib/types";
-import { bowlerOvers } from "@/lib/cricket/engine";
+import { bowlerOvers, planUndoBall } from "@/lib/cricket/engine";
+import type { OverDelivery } from "@/lib/cricket/engine";
 
 type MV = ReturnType<typeof buildMatchView>;
 type DeliveryPayload = {
@@ -61,7 +62,12 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
 
   const [extra, setExtra] = useState<null | ExtraType>(null);
   const [wicketOpen, setWicketOpen] = useState(false);
-  const [manageOpen, setManageOpen] = useState(false);
+  // A batsman at the crease tapped for replace/retire (by player id).
+  const [manageBatsman, setManageBatsman] = useState<{ id: string; isStriker: boolean } | null>(null);
+  // A recorded ball tapped in the over-strip for re-scoring (by delivery id).
+  const [selectedBallId, setSelectedBallId] = useState<string | null>(null);
+  // Immersive/full-screen scoring (hides the admin chrome, fills the phone).
+  const [immersive, setImmersive] = useState(false);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [restartOpen, setRestartOpen] = useState(false);
   const [restartInningsOpen, setRestartInningsOpen] = useState(false);
@@ -146,6 +152,21 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
     },
     [enqueue]
   );
+
+  // Full-screen scoring. Uses a fixed-inset overlay (reliable everywhere) and
+  // best-effort asks the browser for real full-screen too (ignored on iOS).
+  const toggleImmersive = useCallback(() => {
+    setImmersive((on) => {
+      const next = !on;
+      try {
+        if (next) document.documentElement.requestFullscreen?.().catch(() => {});
+        else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      } catch {
+        /* fullscreen API unavailable — the overlay alone is enough */
+      }
+      return next;
+    });
+  }, []);
 
   const renderMatchOptions = (currentInningsId?: string) => (
     <>
@@ -315,12 +336,14 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
       () => recordDelivery(inningsId, bowlerForBall!, payload)
     );
 
-  // Delete the most recent ball/event (optimistic, then persist). Keeps the
-  // bowler selection so undoing the first ball of an over doesn't re-prompt.
+  // Undo the last ball (optimistic, then persist). A wicket ball is reverted
+  // together with the replacement batsman it forced in, so one tap restores the
+  // exact pre-ball crease (out batsman un-marked and back in). Keeps the bowler
+  // selection so undoing the first ball of an over doesn't re-prompt.
   const deleteLastBall = () =>
     mutate(
-      (b) => removeLastEvent(b),
-      () => undoLast(inningsId)
+      (b) => applyOptimisticUndoBall(b, inningsId),
+      () => undoBall(inningsId)
     );
 
   // ScoringPad "Undo": if the over hasn't started (a bowler is picked but no
@@ -386,8 +409,29 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
 
   const doCatchDrop = (fielderId: string) => act(() => recordDroppedCatch(inningsId, fielderId));
 
+  // Re-score an already-recorded plain-bat ball (tap a ball in the over strip,
+  // then tap a run). The engine re-derives strike/totals from the corrected log.
+  const editBall = (deliveryId: string, runs: number) => {
+    setSelectedBallId(null);
+    mutate(
+      (b) => applyOptimisticEditRuns(b, deliveryId, runs),
+      () => editDeliveryRuns(deliveryId, runs)
+    );
+  };
+
   return (
-    <div className="space-y-4">
+    <div
+      className={
+        immersive
+          ? "fixed inset-0 z-50 space-y-2.5 overflow-y-auto overscroll-contain bg-surface px-3 pb-6 pt-[max(env(safe-area-inset-top),3.25rem)] safe-bottom"
+          : "space-y-3"
+      }
+    >
+      <div className="flex items-center justify-end">
+        <button onClick={toggleImmersive} className="sg-btn-ghost px-3 py-1.5 text-xs font-semibold">
+          {immersive ? "⤡ Exit full screen" : "⤢ Full screen"}
+        </button>
+      </div>
       {/* Score header */}
       <div className="relative overflow-hidden rounded-2xl border border-line bg-gradient-to-br from-brand-500/15 to-cream-200 p-4">
         <div className="flex items-center justify-between">
@@ -415,39 +459,69 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
             ⚡ Free Hit
           </span>
         )}
-        <div className="mt-3 space-y-1 text-sm">
-          {[s.strikerId, s.nonStrikerId].map((id, i) => {
+        {/* Batsmen at the crease — tap the radio to set strike, tap the name to
+            replace/retire that batsman. Bigger, thumb-friendly rows. */}
+        <div className="mt-3 space-y-1.5">
+          {[s.strikerId, s.nonStrikerId].map((id) => {
             if (!id) return null;
             const b = s.batsmen.find((x) => x.playerId === id);
+            const isStriker = id === s.strikerId;
+            const bothIn = s.strikerId !== null && s.nonStrikerId !== null;
             return (
-              <div key={id} className="flex justify-between">
-                <span className="text-ink">{i === 0 ? "● " : "  "}{playerName(view, id)}</span>
-                <span className="font-mono text-ink-soft">{b?.runs ?? 0} ({b?.balls ?? 0})</span>
+              <div key={id} className="flex items-center gap-2.5">
+                <button
+                  aria-label={isStriker ? "on strike" : "put on strike"}
+                  disabled={busy || !bothIn}
+                  onClick={() => { if (!isStriker && bothIn) doSwapStrike(); }}
+                  className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition ${
+                    isStriker ? "border-brand bg-brand" : "border-ink-faint"
+                  }`}
+                >
+                  {isStriker && <span className="h-2 w-2 rounded-full bg-brand-900" />}
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => setManageBatsman({ id, isStriker })}
+                  className="min-w-0 flex-1 truncate rounded-xl border border-line bg-cream-200/70 px-3 py-2.5 text-left font-display text-xl font-bold capitalize leading-tight text-ink active:scale-[0.99]"
+                >
+                  {playerName(view, id)}
+                </button>
+                <span className="shrink-0 font-mono text-lg font-semibold text-ink-soft">
+                  {b?.runs ?? 0} <span className="text-sm text-ink-muted">({b?.balls ?? 0})</span>
+                </span>
               </div>
             );
           })}
           {bowlerForBall && (
-            <div className="flex justify-between border-t border-line/60 pt-1">
-              <span className="text-ink-muted">
+            <button
+              disabled={busy}
+              onClick={() => setChangeBowlerOpen(true)}
+              className="mt-1 flex w-full items-center justify-between gap-2 rounded-xl border border-line bg-cream-200/50 px-3 py-2 text-left active:scale-[0.99]"
+            >
+              <span className="min-w-0 truncate font-display text-lg font-bold capitalize text-ink-soft">
                 🎯 {playerName(view, bowlerForBall)}
-                {!s.currentBowlerId && <span className="ml-1 text-xs text-ink-faint">· new over</span>}
+                {!s.currentBowlerId && <span className="ml-1 text-xs font-normal normal-case text-ink-faint">· new over</span>}
               </span>
-              <span className="font-mono text-ink-soft">
+              <span className="shrink-0 font-mono text-sm text-ink-soft">
                 {s.bowlers.find((x) => x.playerId === bowlerForBall)?.wickets ?? 0}/
                 {s.bowlers.find((x) => x.playerId === bowlerForBall)?.runsConceded ?? 0} (
                 {bowlerOvers(s.bowlers.find((x) => x.playerId === bowlerForBall)?.legalBalls ?? 0)})
               </span>
-            </div>
+            </button>
           )}
         </div>
-        {s.thisOver.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {s.thisOver.map((d) => (
-              <BallChip key={d.id} d={d} size="sm" />
-            ))}
-          </div>
-        )}
       </div>
+
+      {/* This over — big tappable circles. Green = legal, red = wide/no-ball,
+          dashed yellow = the ball about to be bowled. Tap a bat ball to re-score.
+          Sits OUTSIDE the score card so the circles aren't clipped by its overflow. */}
+      <BallsRound
+        deliveries={s.thisOver}
+        showNext={!s.isInningsOver && bowlerForBall !== null && s.strikerId !== null}
+        selectedId={selectedBallId}
+        disabled={busy}
+        onSelect={(id) => setSelectedBallId((cur) => (cur === id ? null : id))}
+      />
 
       <ErrorLine error={error} />
 
@@ -480,7 +554,14 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
       ) : needOpeners ? (
         <OpenerPicker players={battingPlayers} busy={busy} view={view} onPick={pickOpeners} />
       ) : needOneBatsman ? (
-        <SinglePicker title="Select next batsman" players={availableBatsmen} busy={busy} onPick={pickNextBatsman} />
+        <SinglePicker
+          title="Select next batsman"
+          players={availableBatsmen}
+          busy={busy}
+          onPick={pickNextBatsman}
+          onCancel={deleteLastBall}
+          cancelLabel="✕ Cancel — undo the wicket"
+        />
       ) : needBowler ? (
         <BowlerPicker
           players={bowlingPlayers}
@@ -494,12 +575,15 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
         <ScoringPad
           busy={busy}
           disabled={!warm}
-          onRun={(n) => record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false })}
+          editing={selectedBallId !== null}
+          onRun={(n) => {
+            if (selectedBallId !== null) editBall(selectedBallId, n);
+            else record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false });
+          }}
+          onCancelEdit={() => setSelectedBallId(null)}
           onGully={(n) => record({ runs_off_bat: n, extra_type: "none", extra_runs: 0, is_wicket: false, no_strike_change: true })}
           onExtra={setExtra}
           onWicket={() => setWicketOpen(true)}
-          onManage={() => setManageOpen(true)}
-          onChangeBowler={() => setChangeBowlerOpen(true)}
           onCatchDrop={() => setCatchDropOpen(true)}
           onUndo={undo}
           onAbandon={() => setAbandonOpen(true)}
@@ -523,17 +607,14 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
         onSubmit={(p) => { setWicketOpen(false); record(p); }}
       />
 
-      <ManageBatsmenModal
-        open={manageOpen}
-        onClose={() => setManageOpen(false)}
-        striker={s.strikerId}
-        nonStriker={s.nonStrikerId}
+      <BatsmanActionModal
+        target={manageBatsman}
+        onClose={() => setManageBatsman(null)}
         bench={availableBatsmen}
         view={view}
         busy={busy}
-        onSwapStrike={() => doSwapStrike()}
-        onReplace={(outgoing, incoming, onStrike) => { setManageOpen(false); doReplace(outgoing, incoming, onStrike); }}
-        onRetire={(playerId, out) => { setManageOpen(false); doRetire(playerId, out); }}
+        onReplace={(outgoing, incoming, onStrike) => { setManageBatsman(null); doReplace(outgoing, incoming, onStrike); }}
+        onRetire={(playerId, out) => { setManageBatsman(null); doRetire(playerId, out); }}
       />
 
       <Modal open={changeBowlerOpen} onClose={() => setChangeBowlerOpen(false)} title="Change bowler">
@@ -590,6 +671,11 @@ export function ScoringConsole({ initial }: { initial: MatchBundle }) {
 }
 
 // ── helpers & sub-components ─────────────────────────────────────
+/** Title-case a name for contexts where CSS `capitalize` can't reach (e.g. modal titles). */
+function capName(name: string): string {
+  return name.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function lineup(view: MV, teamId: string): Player[] {
   return view.matchPlayers
     .filter((mp) => mp.team_id === teamId)
@@ -612,7 +698,7 @@ function PlayerRow({ p, onClick, disabled, badge }: { p: Player; onClick: () => 
       } ${disabled ? "opacity-30" : "active:scale-[0.99]"}`}
     >
       <Avatar name={p.name} photo={p.photo_url} size={36} />
-      <span className="flex-1 truncate text-sm font-medium text-ink">{p.nickname || p.name}</span>
+      <span className="flex-1 truncate text-sm font-medium capitalize text-ink">{p.nickname || p.name}</span>
       {badge && <span className="text-xs font-semibold text-brand-600">{badge}</span>}
     </button>
   );
@@ -650,15 +736,40 @@ function OpenerPicker({ players, busy, view, onPick }: { players: Player[]; busy
   );
 }
 
-function SinglePicker({ title, players, busy, onPick }: { title: string; players: Player[]; busy: boolean; onPick: (id: string) => void }) {
+function SinglePicker({
+  title, players, busy, onPick, onCancel, cancelLabel,
+}: {
+  title: string;
+  players: Player[];
+  busy: boolean;
+  onPick: (id: string) => void;
+  onCancel?: () => void;
+  cancelLabel?: string;
+}) {
   return (
     <div className="sg-card p-4">
-      <h3 className="mb-3 font-display font-bold text-ink">{title}</h3>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="font-display font-bold text-ink">{title}</h3>
+        {onCancel && (
+          <button
+            disabled={busy}
+            onClick={onCancel}
+            className="shrink-0 rounded-lg px-2 py-1 text-sm font-semibold text-wicket hover:bg-cream-200"
+          >
+            ✕ Cancel
+          </button>
+        )}
+      </div>
       <div className="max-h-72 space-y-1.5 overflow-y-auto">
         {players.map((p) => (
           <PlayerRow key={p.id} p={p} disabled={busy} onClick={() => onPick(p.id)} />
         ))}
       </div>
+      {onCancel && (
+        <button disabled={busy} onClick={onCancel} className="sg-btn-ghost mt-3 w-full py-2.5 text-sm">
+          {cancelLabel ?? "✕ Cancel — undo the last ball"}
+        </button>
+      )}
     </div>
   );
 }
@@ -703,61 +814,68 @@ function BowlerPicker({
 }
 
 function ScoringPad({
-  busy, disabled, onRun, onGully, onExtra, onWicket, onManage, onChangeBowler, onCatchDrop, onUndo, onAbandon,
+  busy, disabled, editing, onRun, onCancelEdit, onGully, onExtra, onWicket, onCatchDrop, onUndo, onAbandon,
 }: {
   busy: boolean;
   disabled?: boolean;
+  editing: boolean;
   onRun: (n: number) => void;
+  onCancelEdit: () => void;
   onGully: (n: number) => void;
   onExtra: (e: ExtraType) => void;
   onWicket: () => void;
-  onManage: () => void;
-  onChangeBowler: () => void;
   onCatchDrop: () => void;
   onUndo: () => void;
   onAbandon: () => void;
 }) {
   const off = busy || !!disabled; // scoring buttons locked until warm / while busy
+  const otherOff = off || editing; // non-run controls are disabled while re-scoring a ball
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-4 gap-2.5">
+    <div className="space-y-2">
+      {editing && (
+        <div className="flex items-center justify-between rounded-xl border border-gold/50 bg-gold-soft px-3 py-2 text-sm">
+          <span className="font-semibold text-gold-dark">Re-scoring a ball — tap the correct runs</span>
+          <button onClick={onCancelEdit} className="text-xs font-semibold text-gold-dark underline">Cancel</button>
+        </div>
+      )}
+      <div className="grid grid-cols-4 gap-2">
         {[0, 1, 2, 3, 4, 5, 6].map((n) => (
           <button
             key={n}
             disabled={off}
             onClick={() => onRun(n)}
-            className={`sg-btn h-16 text-2xl font-bold ${
-              n === 4 ? "bg-boundary text-white" : n === 6 ? "bg-brand text-brand-900 shadow-glow" : "border border-line bg-cream-200 text-ink"
+            className={`sg-btn h-14 text-2xl font-bold ${
+              editing
+                ? "border-2 border-gold bg-gold-soft text-gold-dark"
+                : n === 4
+                ? "bg-boundary text-white"
+                : n === 6
+                ? "bg-brand text-brand-900 shadow-glow"
+                : "border border-line bg-cream-200 text-ink"
             }`}
           >
             {n}
           </button>
         ))}
-        <button disabled={off} onClick={onWicket} className="sg-btn-danger h-16 text-lg font-bold">OUT</button>
+        <button disabled={otherOff} onClick={onWicket} className="sg-btn-danger h-14 text-lg font-bold">OUT</button>
       </div>
       {/* Gully runs: credited to batsman + team, but strike stays put. */}
-      <div className="grid grid-cols-2 gap-2.5">
-        <button disabled={off} onClick={() => onGully(1)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
-          1G <span className="font-normal text-ink-muted">· keep strike</span>
+      <div className="grid grid-cols-4 gap-2">
+        <button disabled={otherOff} onClick={() => onGully(1)} className="sg-btn-ghost h-11 text-sm font-bold">1G</button>
+        <button disabled={otherOff} onClick={() => onGully(2)} className="sg-btn-ghost h-11 text-sm font-bold">2G</button>
+        <button disabled={otherOff} onClick={() => onExtra("wide")} className="sg-btn-ghost h-11 text-sm">Wide</button>
+        <button disabled={otherOff} onClick={() => onExtra("no_ball")} className="sg-btn-ghost h-11 text-sm">No Ball</button>
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        <button disabled={otherOff} onClick={() => onExtra("bye")} className="sg-btn-ghost h-11 text-sm">Bye</button>
+        <button disabled={otherOff} onClick={() => onExtra("leg_bye")} className="sg-btn-ghost h-11 text-sm">Leg Bye</button>
+        <button disabled={otherOff} onClick={onCatchDrop} className="sg-btn-ghost h-11 text-sm">Catch Drop</button>
+        <button disabled={busy || editing} onClick={onUndo} className="sg-btn-ghost h-11 text-sm">
+          <span className="font-bold text-wicket">✕</span>&nbsp;Undo
         </button>
-        <button disabled={off} onClick={() => onGully(2)} className="sg-btn h-12 border border-brand/50 bg-brand-50 text-sm font-bold text-brand-700">
-          2G <span className="font-normal text-ink-muted">· keep strike</span>
-        </button>
       </div>
-      <div className="grid grid-cols-4 gap-2.5">
-        <button disabled={off} onClick={() => onExtra("wide")} className="sg-btn-ghost h-12 text-sm">Wide</button>
-        <button disabled={off} onClick={() => onExtra("no_ball")} className="sg-btn-ghost h-12 text-sm">No Ball</button>
-        <button disabled={off} onClick={() => onExtra("bye")} className="sg-btn-ghost h-12 text-sm">Bye</button>
-        <button disabled={off} onClick={() => onExtra("leg_bye")} className="sg-btn-ghost h-12 text-sm">Leg Bye</button>
-      </div>
-      <div className="grid grid-cols-3 gap-2.5">
-        <button disabled={busy} onClick={onManage} className="sg-btn-ghost h-12 text-sm">⇄ Batsmen</button>
-        <button disabled={off} onClick={onChangeBowler} className="sg-btn-ghost h-12 text-sm">⟳ Bowler</button>
-        <button disabled={off} onClick={onCatchDrop} className="sg-btn-ghost h-12 text-sm">🧤 Drop</button>
-      </div>
-      <div className="grid grid-cols-2 gap-2.5">
-        <button disabled={busy} onClick={onUndo} className="sg-btn-ghost h-12 text-sm">↩ Undo</button>
-        <button disabled={busy} onClick={onAbandon} className="sg-btn-ghost h-12 text-sm text-wicket">Abandon</button>
+      <div className="grid grid-cols-1">
+        <button disabled={busy || editing} onClick={onAbandon} className="sg-btn-ghost h-10 text-xs text-wicket">Abandon match</button>
       </div>
     </div>
   );
@@ -868,7 +986,7 @@ function WicketModal({
               <p className="sg-label">Who is out?</p>
               <div className="grid grid-cols-2 gap-2">
                 {[striker, nonStriker].filter(Boolean).map((id) => (
-                  <button key={id} onClick={() => setDismissed(id!)} className={`rounded-xl border p-2.5 text-sm transition ${dismissed === id ? "border-brand bg-brand-50" : "border-line bg-cream-200"}`}>
+                  <button key={id} onClick={() => setDismissed(id!)} className={`rounded-xl border p-2.5 text-sm capitalize transition ${dismissed === id ? "border-brand bg-brand-50" : "border-line bg-cream-200"}`}>
                     {playerName(view, id)}
                   </button>
                 ))}
@@ -887,7 +1005,7 @@ function WicketModal({
               value={fielder ?? ""}
               onChange={(v) => setFielder(v || null)}
               placeholder="Select…"
-              options={fielders.map((f) => ({ value: f.id, label: f.nickname || f.name }))}
+              options={fielders.map((f) => ({ value: f.id, label: capName(f.nickname || f.name) }))}
             />
           </div>
         )}
@@ -917,69 +1035,123 @@ function WicketModal({
  * strike), or retire a batsman (not-out = can return, or out = counts as a
  * wicket). Covers the "a batsman bats a couple of balls then leaves" case.
  */
-function ManageBatsmenModal({
-  open, onClose, striker, nonStriker, bench, view, busy, onSwapStrike, onReplace, onRetire,
+/**
+ * The over so far, as big tappable circles. Green border = legal ball,
+ * red border = wide/no-ball, dashed yellow = the ball about to be bowled.
+ * Tapping a plain bat delivery selects it (yellow) so a run can be re-scored.
+ */
+function BallsRound({
+  deliveries, showNext, selectedId, disabled, onSelect,
 }: {
-  open: boolean;
+  deliveries: OverDelivery[];
+  showNext: boolean;
+  selectedId: string | null;
+  disabled: boolean;
+  onSelect: (id: string) => void;
+}) {
+  if (deliveries.length === 0 && !showNext) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-1">
+      {deliveries.map((d) => {
+        const selected = d.id === selectedId;
+        const canEdit = d.editable && !d.id.startsWith("opt-");
+        const border = selected
+          ? "border-gold ring-2 ring-gold/50"
+          : d.isWicket || !d.legal
+          ? "border-wicket"
+          : "border-brand";
+        const text = selected ? "text-gold-dark" : d.isWicket || !d.legal ? "text-wicket" : "text-ink";
+        return (
+          <button
+            key={d.id}
+            disabled={disabled || !canEdit}
+            onClick={() => canEdit && onSelect(d.id)}
+            className={`grid h-11 min-w-[2.75rem] place-items-center rounded-full border-2 bg-surface px-1.5 text-sm font-bold tabular-nums transition disabled:opacity-100 ${border} ${text} ${canEdit ? "active:scale-95" : "cursor-default"}`}
+          >
+            {d.chip}
+          </button>
+        );
+      })}
+      {showNext && (
+        <span
+          aria-label="next ball"
+          className="grid h-11 w-11 place-items-center rounded-full border-2 border-dashed border-gold/70"
+        >
+          <span className="h-2 w-2 rounded-full bg-gold/70" />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Actions for a single batsman tapped at the crease: replace them with a bench
+ * / returning batsman (choosing who takes strike), or retire them (not-out =
+ * can return, or out = counts as a wicket). Strike itself is set from the score
+ * header's radio, so there's no swap control here.
+ */
+function BatsmanActionModal({
+  target, onClose, bench, view, busy, onReplace, onRetire,
+}: {
+  target: { id: string; isStriker: boolean } | null;
   onClose: () => void;
-  striker: string | null;
-  nonStriker: string | null;
   bench: Player[];
   view: MV;
   busy: boolean;
-  onSwapStrike: () => void;
   onReplace: (outgoingId: string, incomingId: string, incomingOnStrike: boolean) => void;
   onRetire: (playerId: string, out: boolean) => void;
 }) {
-  const crease = [striker, nonStriker].filter(Boolean) as string[];
-  const [mode, setMode] = useState<"home" | "replace" | "retire">("home");
-  const [outgoing, setOutgoing] = useState<string | null>(null);
   const [incoming, setIncoming] = useState<string | null>(null);
   const [onStrike, setOnStrike] = useState(true);
+  const [mode, setMode] = useState<"home" | "replace">("home");
 
-  const close = () => { setMode("home"); setOutgoing(null); setIncoming(null); setOnStrike(true); onClose(); };
-  const bothIn = striker !== null && nonStriker !== null;
+  useEffect(() => {
+    setIncoming(null);
+    setMode("home");
+    setOnStrike(target?.isStriker ?? true);
+  }, [target]);
 
+  const name = target ? playerName(view, target.id) : "";
   return (
-    <Modal open={open} onClose={close} title="Manage batsmen">
-      {mode === "home" && (
-        <div className="space-y-3">
-          <div className="rounded-xl border border-line bg-cream-200 p-3 text-sm">
-            <div className="flex justify-between"><span className="text-ink">● {playerName(view, striker)}</span><span className="text-ink-muted">on strike</span></div>
-            {nonStriker && <div className="mt-1 flex justify-between"><span className="text-ink">{playerName(view, nonStriker)}</span><span className="text-ink-muted">non-striker</span></div>}
-          </div>
-          <button disabled={busy || !bothIn} onClick={() => { onSwapStrike(); }} className="sg-btn-ghost w-full py-3 text-sm">
-            ⇄ Swap strike
+    <Modal open={target !== null} onClose={onClose} title={`Change ${capName(name)}`}>
+      {target && mode === "home" && (
+        <div className="space-y-2.5">
+          <button
+            disabled={busy || bench.length === 0}
+            onClick={() => setMode("replace")}
+            className="block w-full rounded-xl border border-line bg-cream-200 p-3 text-left transition active:scale-[0.99] disabled:opacity-40"
+          >
+            <span className="block font-semibold text-ink">⟳ Replace batsman</span>
+            <span className="mt-0.5 block text-xs leading-snug text-ink-muted">
+              {bench.length === 0 ? "no bench / returning batsmen available" : "bring in a new or returning batsman"}
+            </span>
           </button>
-          <button disabled={busy || crease.length === 0 || bench.length === 0} onClick={() => setMode("replace")} className="sg-btn-ghost w-full py-3 text-sm">
-            ⟳ Replace a batsman
-            <span className="block text-xs text-ink-muted">{bench.length === 0 ? "no bench batsmen available" : "sub in a bench / returning batsman"}</span>
+          <button
+            disabled={busy}
+            onClick={() => onRetire(target.id, false)}
+            className="block w-full rounded-xl border border-line bg-cream-200 p-3 text-left transition active:scale-[0.99] disabled:opacity-40"
+          >
+            <span className="block font-semibold text-ink">Retire — not out</span>
+            <span className="mt-0.5 block text-xs leading-snug text-ink-muted">keeps their score, can return later</span>
           </button>
-          <button disabled={busy || crease.length === 0} onClick={() => setMode("retire")} className="sg-btn-ghost w-full py-3 text-sm">
-            🚪 Retire a batsman
+          <button
+            disabled={busy}
+            onClick={() => onRetire(target.id, true)}
+            className="block w-full rounded-xl border border-wicket/40 bg-wicket-soft p-3 text-left transition active:scale-[0.99] disabled:opacity-40"
+          >
+            <span className="block font-semibold text-wicket-dark">Retire out</span>
+            <span className="mt-0.5 block text-xs leading-snug text-wicket-dark/80">counts as a wicket</span>
           </button>
+          <button onClick={onClose} className="sg-btn-ghost w-full py-2.5 text-sm">Cancel</button>
         </div>
       )}
-
-      {mode === "replace" && (
+      {target && mode === "replace" && (
         <div className="space-y-4">
-          <div>
-            <p className="sg-label">Who is leaving?</p>
-            <div className="grid grid-cols-2 gap-2">
-              {crease.map((id) => (
-                <button key={id} onClick={() => setOutgoing(id)} className={`rounded-xl border p-2.5 text-sm transition ${outgoing === id ? "border-brand bg-brand-50" : "border-line bg-cream-200"}`}>
-                  {playerName(view, id)}{id === striker ? " ●" : ""}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="sg-label">Who comes in?</p>
-            <div className="max-h-48 space-y-1.5 overflow-y-auto">
-              {bench.map((p) => (
-                <PlayerRow key={p.id} p={p} badge={incoming === p.id ? "coming in" : null} onClick={() => setIncoming(p.id)} />
-              ))}
-            </div>
+          <p className="sg-label capitalize">Who comes in for {name}?</p>
+          <div className="max-h-56 space-y-1.5 overflow-y-auto">
+            {bench.map((p) => (
+              <PlayerRow key={p.id} p={p} badge={incoming === p.id ? "coming in" : null} onClick={() => setIncoming(p.id)} />
+            ))}
           </div>
           <label className="flex items-center justify-between rounded-xl border border-line bg-cream-200 p-3 text-sm">
             <span className="text-ink">New batsman takes strike</span>
@@ -987,34 +1159,14 @@ function ManageBatsmenModal({
           </label>
           <div className="flex gap-2">
             <button onClick={() => setMode("home")} className="sg-btn-ghost flex-1 py-3">Back</button>
-            <button disabled={busy || !outgoing || !incoming} onClick={() => outgoing && incoming && onReplace(outgoing, incoming, onStrike)} className="sg-btn-primary flex-1 py-3">
+            <button
+              disabled={busy || !incoming}
+              onClick={() => incoming && onReplace(target.id, incoming, onStrike)}
+              className="sg-btn-primary flex-1 py-3"
+            >
               Confirm
             </button>
           </div>
-        </div>
-      )}
-
-      {mode === "retire" && (
-        <div className="space-y-4">
-          <div>
-            <p className="sg-label">Who is retiring?</p>
-            <div className="grid grid-cols-2 gap-2">
-              {crease.map((id) => (
-                <button key={id} onClick={() => setOutgoing(id)} className={`rounded-xl border p-2.5 text-sm transition ${outgoing === id ? "border-brand bg-brand-50" : "border-line bg-cream-200"}`}>
-                  {playerName(view, id)}{id === striker ? " ●" : ""}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button disabled={busy || !outgoing} onClick={() => outgoing && onRetire(outgoing, false)} className="sg-btn-ghost py-3">
-              Retired — not out<span className="block text-xs text-ink-muted">can return later</span>
-            </button>
-            <button disabled={busy || !outgoing} onClick={() => outgoing && onRetire(outgoing, true)} className="sg-btn-danger py-3">
-              Retired out<span className="block text-xs opacity-80">counts as wicket</span>
-            </button>
-          </div>
-          <button onClick={() => setMode("home")} className="sg-btn-ghost w-full py-3">Back</button>
         </div>
       )}
     </Modal>
@@ -1087,6 +1239,18 @@ function appendOptimisticEvents(
   return { ...b, events: [...b.events, ...rows] };
 }
 
+/** Mirror editDeliveryRuns: correct one recorded delivery's off-the-bat runs. */
+function applyOptimisticEditRuns(b: MatchBundle, deliveryId: string, runs: number): MatchBundle {
+  return {
+    ...b,
+    deliveries: b.deliveries.map((d) =>
+      d.id === deliveryId && d.extra_type === "none" && !d.is_wicket
+        ? { ...d, runs_off_bat: runs }
+        : d
+    ),
+  };
+}
+
 /** Which empty end a next batsman should fill (mirrors selectNextBatsman). */
 function nextEnd(b: MatchBundle): "striker" | "non_striker" {
   const s = buildMatchView(b).currentInnings?.state;
@@ -1115,13 +1279,21 @@ function appendOptimisticReplace(
   return appendOptimisticEvents(b, inningsId, events);
 }
 
-/** Optimistic undo: drop the single highest-seq row (delivery or batting event). */
-function removeLastEvent(b: MatchBundle): MatchBundle {
-  const lastD = b.deliveries.length ? b.deliveries[b.deliveries.length - 1] : null;
-  const lastE = b.events.length ? b.events[b.events.length - 1] : null;
-  const dSeq = lastD?.seq ?? -1;
-  const eSeq = lastE?.seq ?? -1;
-  if (dSeq < 0 && eSeq < 0) return b;
-  if (dSeq >= eSeq) return { ...b, deliveries: b.deliveries.slice(0, -1) };
-  return { ...b, events: b.events.slice(0, -1) };
+/**
+ * Optimistic undo mirroring the server's undoBall: removes the last ball and,
+ * if it was a wicket, the replacement batsman that came in with it — using the
+ * same planUndoBall rule so the local state matches what the DB will hold.
+ */
+function applyOptimisticUndoBall(b: MatchBundle, inningsId: string): MatchBundle {
+  const deliveries = b.deliveries.filter((d) => d.innings_id === inningsId);
+  const events = b.events.filter((e) => e.innings_id === inningsId);
+  const plan = planUndoBall(deliveries, events);
+  const dropD = new Set(plan.deliveryIds);
+  const dropE = new Set(plan.eventIds);
+  if (dropD.size === 0 && dropE.size === 0) return b;
+  return {
+    ...b,
+    deliveries: b.deliveries.filter((d) => !dropD.has(d.id)),
+    events: b.events.filter((e) => !dropE.has(e.id)),
+  };
 }

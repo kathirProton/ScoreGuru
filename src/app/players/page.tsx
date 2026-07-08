@@ -33,7 +33,7 @@ export default async function PlayersPage() {
                 <Avatar name={p.name} photo={p.photo_url} size={52} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <p className="truncate font-display font-semibold text-ink">
+                    <p className="truncate font-display font-semibold capitalize text-ink">
                       {p.nickname || p.name}
                     </p>
                     {p.jersey_number != null && (
