@@ -697,8 +697,9 @@ async function completeMatchInternal(
   if (isTie) resultText = "Match tied";
   else resultText = `${nameOf(winnerTeamId)} ${resultDetail}`;
 
-  // POTM
-  const potm = await computeMatchPOTM(supabase, match.id);
+  // POTM (goes to a winning-team player; the match row isn't updated with the
+  // winner yet, so pass it through explicitly).
+  const potm = await computeMatchPOTM(supabase, match.id, winnerTeamId, isTie);
 
   await supabase
     .from("matches")
@@ -713,7 +714,12 @@ async function completeMatchInternal(
     .eq("id", match.id);
 }
 
-async function computeMatchPOTM(supabase: SB, matchId: string): Promise<string | null> {
+async function computeMatchPOTM(
+  supabase: SB,
+  matchId: string,
+  winnerTeamId: string | null,
+  isTie: boolean
+): Promise<string | null> {
   const { data: match } = await supabase.from("matches").select("*").eq("id", matchId).single();
   const { data: innings } = await supabase.from("innings").select("*").eq("match_id", matchId);
   const innIds = (innings ?? []).map((i) => i.id);
@@ -727,10 +733,11 @@ async function computeMatchPOTM(supabase: SB, matchId: string): Promise<string |
     .from("match_players")
     .select("match_id,team_id,player_id")
     .eq("match_id", matchId);
-  // compute as if completed
+  // Compute as if completed, with the freshly-decided result (the DB row isn't
+  // updated with the winner until after this runs).
   return computePOTM(
     {
-      matches: [{ ...match, status: "completed" }],
+      matches: [{ ...match, status: "completed", winner_team_id: winnerTeamId, is_tie: isTie }],
       innings: innings ?? [],
       deliveries: deliveries ?? [],
       events: events ?? [],

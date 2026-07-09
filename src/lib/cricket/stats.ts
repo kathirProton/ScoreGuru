@@ -327,9 +327,20 @@ function singleMatchAggs(input: AggregateInput, matchId: string): Map<string, Pl
 export function computePOTM(input: AggregateInput, matchId: string): string | null {
   const aggs = singleMatchAggs(input, matchId);
   if (!aggs) return null;
+  // Man of the match goes to a player on the WINNING team (as in almost every
+  // real match). For a tie / no-result (no winner) fall back to the best player
+  // across both teams.
+  const match = input.matches.find((m) => m.id === matchId);
+  const winnerTeamId = match && !match.is_tie ? match.winner_team_id : null;
+  const teamByPlayer = new Map(
+    input.matchPlayers
+      .filter((mp) => mp.match_id === matchId)
+      .map((mp) => [mp.player_id, mp.team_id])
+  );
   let bestId: string | null = null;
   let bestPts = -Infinity;
   for (const a of aggs.values()) {
+    if (winnerTeamId && teamByPlayer.get(a.playerId) !== winnerTeamId) continue;
     const pts = playerImpactPoints(a);
     if (pts > bestPts) {
       bestPts = pts;
