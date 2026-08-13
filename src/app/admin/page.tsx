@@ -87,9 +87,16 @@ export default async function AdminDashboard() {
                     {m.overs} overs · {formatDate(m.match_date)}
                   </p>
                 </div>
-                <Link href={`/admin/matches/${m.id}/score`} className="sg-btn-primary shrink-0 px-4 py-2.5 text-sm">
-                  {m.status === "setup" ? "Set up" : "Score"}
-                </Link>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link href={`/admin/matches/${m.id}/score`} className="sg-btn-primary px-4 py-2.5 text-sm">
+                    {m.status === "setup" ? "Set up" : "Score"}
+                  </Link>
+                  <MatchDeleteButton
+                    matchId={m.id}
+                    label={`${nameOf(m.team_a_id)} vs ${nameOf(m.team_b_id)}`}
+                    status={m.status}
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -119,7 +126,11 @@ export default async function AdminDashboard() {
                   <Link href={`/admin/matches/${m.id}/edit`} className="sg-btn-ghost px-3 py-2 text-sm">
                     Edit
                   </Link>
-                  <MatchDeleteButton matchId={m.id} label={`${nameOf(m.team_a_id)} vs ${nameOf(m.team_b_id)}`} />
+                  <MatchDeleteButton
+                    matchId={m.id}
+                    label={`${nameOf(m.team_a_id)} vs ${nameOf(m.team_b_id)}`}
+                    status={m.status}
+                  />
                 </div>
               </div>
             ))}
