@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:reads": "node scripts/check-paged-reads.mjs",
+    "check": "npm run check:reads && npm run typecheck"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

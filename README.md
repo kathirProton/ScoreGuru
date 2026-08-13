@@ -86,6 +86,12 @@ The app is installable (manifest + icons in `public/`). On mobile, "Add to Home 
 - Timezone **IST**; dates **dd/mm/yyyy**.
 - Super-over runs are **excluded** from career stats and leaderboards.
 - A player who has appeared in a match is **hidden** rather than hard-deleted (preserves historical scorecards).
+- **Every read of a growing table must be paged.** PostgREST returns at most
+  1000 rows and truncates *silently* — no error, just a short array. This once
+  cost the leaderboards three whole matches when `deliveries` passed 1000 rows.
+  Use `fetchAll` / `fetchAllIn` from `lib/supabase/paginate.ts`; a bare
+  `.select()` is only safe when bounded (`.single()`, `.limit()`, or a
+  primary-key lookup). `npm run check:reads` enforces this.
 
 ## Project layout
 ```
@@ -99,6 +105,7 @@ src/
     actions/           # server actions (all writes, admin-gated)
     auth.ts            # password verify + signed session cookie
     supabase/          # server (service-role) + browser (anon) clients
+    supabase/paginate.ts # ★ paged reads — required past PostgREST's 1000-row cap
 supabase/migration.sql # full schema + RLS + storage + realtime
 ```
 

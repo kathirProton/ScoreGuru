@@ -4,6 +4,7 @@ import { ensureAdmin } from "@/lib/auth";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { LineupEditor } from "@/components/admin/LineupEditor";
 import { createReadClient } from "@/lib/supabase/server";
+import { fetchAllIn } from "@/lib/supabase/paginate";
 import { getPlayers, getRosterMap } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
@@ -26,19 +27,38 @@ export default async function LineupsPage({ params }: { params: { id: string } }
   const innIds = (innings ?? []).map((i) => i.id);
   const locked = new Set<string>();
   if (innIds.length > 0) {
-    const [{ data: deliveries }, { data: events }] = await Promise.all([
-      supabase
-        .from("deliveries")
-        .select("bowler_id,striker_id,non_striker_id,dismissed_player_id,fielder_id")
-        .in("innings_id", innIds),
-      supabase.from("batting_events").select("player_id").in("innings_id", innIds),
+    // Paged — a truncated log would leave a player who has already played
+    // looking removable.
+    const [deliveries, events] = await Promise.all([
+      fetchAllIn(
+        (ids) =>
+          supabase
+            .from("deliveries")
+            .select("bowler_id,striker_id,non_striker_id,dismissed_player_id,fielder_id", {
+              count: "exact",
+            })
+            .in("innings_id", ids)
+            .order("innings_id")
+            .order("seq"),
+        innIds
+      ),
+      fetchAllIn(
+        (ids) =>
+          supabase
+            .from("batting_events")
+            .select("player_id", { count: "exact" })
+            .in("innings_id", ids)
+            .order("innings_id")
+            .order("seq"),
+        innIds
+      ),
     ]);
-    for (const d of deliveries ?? []) {
+    for (const d of deliveries) {
       [d.bowler_id, d.striker_id, d.non_striker_id, d.dismissed_player_id, d.fielder_id].forEach(
         (id) => id && locked.add(id)
       );
     }
-    for (const e of events ?? []) if (e.player_id) locked.add(e.player_id);
+    for (const e of events) if (e.player_id) locked.add(e.player_id);
   }
 
   return (

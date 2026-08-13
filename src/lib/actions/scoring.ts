@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "../auth";
 import { createServiceClient } from "../supabase/server";
+import { fetchAll, fetchAllIn } from "../supabase/paginate";
 import { deriveInnings, InningsState, planUndoBall } from "../cricket/engine";
 import { computePOTM } from "../cricket/stats";
 import {
@@ -30,23 +31,29 @@ async function loadInningsCtx(supabase: SB, inningsId: string) {
     .eq("id", innings.match_id)
     .single();
   if (!match) throw new Error("Match not found.");
-  const { data: deliveries } = await supabase
-    .from("deliveries")
-    .select("*")
-    .eq("innings_id", inningsId)
-    .order("seq", { ascending: true });
-  const { data: events } = await supabase
-    .from("batting_events")
-    .select("*")
-    .eq("innings_id", inningsId)
-    .order("seq", { ascending: true });
+  // Paged — a truncated log would make the engine re-derive a stale score.
+  // `seq` is unique within an innings, so it is a safe paging key.
+  const deliveries = await fetchAll<Delivery>(() =>
+    supabase
+      .from("deliveries")
+      .select("*", { count: "exact" })
+      .eq("innings_id", inningsId)
+      .order("seq", { ascending: true })
+  );
+  const events = await fetchAll<BattingEvent>(() =>
+    supabase
+      .from("batting_events")
+      .select("*", { count: "exact" })
+      .eq("innings_id", inningsId)
+      .order("seq", { ascending: true })
+  );
   const { count: sizeCount } = await supabase
     .from("match_players")
     .select("*", { count: "exact", head: true })
     .eq("match_id", match.id)
     .eq("team_id", innings.batting_team_id);
   const battingTeamSize = sizeCount ?? 11;
-  return { innings, match, deliveries: deliveries ?? [], events: events ?? [], battingTeamSize };
+  return { innings, match, deliveries, events, battingTeamSize };
 }
 
 function stateOf(
@@ -446,18 +453,31 @@ export async function undoLastBall(matchId: string) {
   if (!innings || innings.length === 0) return { error: "Nothing to undo." };
   const innIds = innings.map((i) => i.id);
 
-  const { data: deliveries } = await supabase
-    .from("deliveries")
-    .select("id,seq,innings_id")
-    .in("innings_id", innIds);
-  const { data: events } = await supabase
-    .from("batting_events")
-    .select("id,seq,innings_id")
-    .in("innings_id", innIds);
+  // Paged — a truncated log here would undo the wrong ball.
+  const deliveries = await fetchAllIn<{ id: string; seq: number; innings_id: string }>(
+    (ids) =>
+      supabase
+        .from("deliveries")
+        .select("id,seq,innings_id", { count: "exact" })
+        .in("innings_id", ids)
+        .order("innings_id")
+        .order("seq"),
+    innIds
+  );
+  const events = await fetchAllIn<{ id: string; seq: number; innings_id: string }>(
+    (ids) =>
+      supabase
+        .from("batting_events")
+        .select("id,seq,innings_id", { count: "exact" })
+        .in("innings_id", ids)
+        .order("innings_id")
+        .order("seq"),
+    innIds
+  );
 
   const all = [
-    ...(deliveries ?? []).map((d) => ({ kind: "d" as const, id: d.id, seq: d.seq, innings_id: d.innings_id })),
-    ...(events ?? []).map((e) => ({ kind: "e" as const, id: e.id, seq: e.seq, innings_id: e.innings_id })),
+    ...deliveries.map((d) => ({ kind: "d" as const, id: d.id, seq: d.seq, innings_id: d.innings_id })),
+    ...events.map((e) => ({ kind: "e" as const, id: e.id, seq: e.seq, innings_id: e.innings_id })),
   ];
   if (all.length === 0) return { error: "Nothing to undo." };
   const last = all.reduce((m, x) => (x.seq > m.seq ? x : m));
@@ -724,11 +744,26 @@ async function computeMatchPOTM(
   const { data: innings } = await supabase.from("innings").select("*").eq("match_id", matchId);
   const innIds = (innings ?? []).map((i) => i.id);
   if (innIds.length === 0 || !match) return null;
-  const { data: deliveries } = await supabase
-    .from("deliveries")
-    .select("*")
-    .in("innings_id", innIds);
-  const { data: events } = await supabase.from("batting_events").select("*").in("innings_id", innIds);
+  const deliveries = await fetchAllIn<Delivery>(
+    (ids) =>
+      supabase
+        .from("deliveries")
+        .select("*", { count: "exact" })
+        .in("innings_id", ids)
+        .order("innings_id")
+        .order("seq"),
+    innIds
+  );
+  const events = await fetchAllIn<BattingEvent>(
+    (ids) =>
+      supabase
+        .from("batting_events")
+        .select("*", { count: "exact" })
+        .in("innings_id", ids)
+        .order("innings_id")
+        .order("seq"),
+    innIds
+  );
   const { data: matchPlayers } = await supabase
     .from("match_players")
     .select("match_id,team_id,player_id")
@@ -739,8 +774,8 @@ async function computeMatchPOTM(
     {
       matches: [{ ...match, status: "completed", winner_team_id: winnerTeamId, is_tie: isTie }],
       innings: innings ?? [],
-      deliveries: deliveries ?? [],
-      events: events ?? [],
+      deliveries,
+      events,
       matchPlayers: matchPlayers ?? [],
     },
     matchId

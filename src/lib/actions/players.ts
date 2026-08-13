@@ -2,6 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "../auth";
 import { createServiceClient } from "../supabase/server";
+import { fetchAllIn } from "../supabase/paginate";
 import type { BattingHand, PlayerStatus } from "../types";
 
 interface PlayerInput {
@@ -222,11 +223,20 @@ export async function deletePlayers(ids: string[]) {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return { error: "No players selected." };
   const supabase = createServiceClient();
-  const { data: mpRows } = await supabase
-    .from("match_players")
-    .select("player_id")
-    .in("player_id", unique);
-  const withHistory = new Set((mpRows ?? []).map((r) => r.player_id));
+  // Paged — `player_id` is not the primary key here, so this fans out to one
+  // row per match played. A truncated result would hard-delete a player who
+  // actually has match history.
+  const mpRows = await fetchAllIn<{ player_id: string }>(
+    (chunk) =>
+      supabase
+        .from("match_players")
+        .select("player_id", { count: "exact" })
+        .in("player_id", chunk)
+        .order("match_id")
+        .order("player_id"),
+    unique
+  );
+  const withHistory = new Set(mpRows.map((r) => r.player_id));
   const toHide = unique.filter((id) => withHistory.has(id));
   const toDelete = unique.filter((id) => !withHistory.has(id));
 

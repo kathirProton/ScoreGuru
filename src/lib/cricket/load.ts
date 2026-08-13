@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../database.types";
+import { fetchAllIn } from "../supabase/paginate";
 import type {
   Match,
   Team,
@@ -52,12 +53,29 @@ export async function fetchMatchBundle(
     .order("innings_number", { ascending: true });
   const innIds = (innings ?? []).map((i) => i.id);
 
-  const { data: deliveries } = innIds.length
-    ? await supabase.from("deliveries").select("*").in("innings_id", innIds).order("seq")
-    : { data: [] as Delivery[] };
-  const { data: events } = innIds.length
-    ? await supabase.from("batting_events").select("*").in("innings_id", innIds).order("seq")
-    : { data: [] as BattingEvent[] };
+  // Paged: `seq` is per-innings, so a match's log spans several innings and a
+  // long match plus super overs can cross PostgREST's 1000-row cap. A truncated
+  // log would silently rewind the live score.
+  const deliveries = await fetchAllIn<Delivery>(
+    (ids) =>
+      supabase
+        .from("deliveries")
+        .select("*", { count: "exact" })
+        .in("innings_id", ids)
+        .order("innings_id")
+        .order("seq"),
+    innIds
+  );
+  const events = await fetchAllIn<BattingEvent>(
+    (ids) =>
+      supabase
+        .from("batting_events")
+        .select("*", { count: "exact" })
+        .in("innings_id", ids)
+        .order("innings_id")
+        .order("seq"),
+    innIds
+  );
 
   return {
     match,
@@ -67,7 +85,7 @@ export async function fetchMatchBundle(
     players: (players ?? []).map((p) => ({ ...p, edit_password: "" })),
     matchPlayers: matchPlayers ?? [],
     innings: innings ?? [],
-    deliveries: deliveries ?? [],
-    events: events ?? [],
+    deliveries,
+    events,
   };
 }
